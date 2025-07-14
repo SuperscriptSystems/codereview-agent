@@ -1,37 +1,45 @@
-name: Code Review Agent
-
-on:
-  pull_request:
-    types: [opened, synchronize]
-  
-permissions:
-  contents: read
-  pull-requests: write
-
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Agent Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Set up Python
+          path: 'agent'
+      - name: Set up Python and Poetry
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
       - name: Install Poetry
         run: pip install poetry
-
-      - name: Install dependencies with Poetry
+      - name: Install agent dependencies
+        working-directory: ./agent
         run: poetry install
+      - name: Checkout Target Code for Review
+        if: github.event.inputs.mode == 'external_pr'
+        run: |
+          git clone ${{ github.event.inputs.target_repo_url }} target_repo
+          cd target_repo
+          git fetch origin pull/${{ github.event.inputs.target_pr_number }}/head:pr_branch
+          git checkout pr_branch
 
+      - name: Checkout Target Code for Review (This Repo)
+        if: github.event.inputs.mode != 'external_pr'
+        uses: actions/checkout@v4
+        with:
+          path: 'target_repo'
+          fetch-depth: 0
       - name: Run Code Review Agent
-        run: python main.py
+        working-directory: ./target_repo
+        run: poetry run python ../agent/main.py
         env:
+          DRY_RUN: ${{ github.event.inputs.mode == 'external_pr' || github.event.inputs.dry_run_this_repo == 'true' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_PR_NUMBER: ${{ github.event.inputs.target_pr_number || github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.event.inputs.target_repo_url || github.repository }}
+      - name: Upload Review Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-review-report-${{ github.run_id }}
+          path: target_repo/review_report.md
