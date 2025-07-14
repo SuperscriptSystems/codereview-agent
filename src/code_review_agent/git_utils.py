@@ -80,23 +80,42 @@ def get_pr_diff(repo_path: str, allowed_extensions: Optional[List[str]] = None) 
     print(f"Info: Comparing HEAD against base branch: {base_branch}")
 
     try:
-        repo.git.fetch('origin', base_branch)
-        base_commit = repo.commit(f'origin/{base_branch}')
+        base_ref = os.environ.get('GITHUB_BASE_REF')
+        if not base_ref:
+            print("Info: GITHUB_BASE_REF not set. Trying to determine the default branch (e.g., main/master).")
+            remote_info = repo.git.remote('show', 'origin')
+            for line in remote_info.split('\n'):
+                if 'HEAD branch' in line:
+                    base_ref = line.split(':')[1].strip()
+                    break
+        
+        if not base_ref:
+            print("Warning: Could not determine default branch. Falling back to 'main'.")
+            base_ref = 'main'
+
+        print(f"Info: Comparing HEAD against base branch: '{base_ref}'")
+
+        repo.git.fetch('origin', base_ref)
+        base_commit = repo.commit(f'origin/{base_ref}')
         diffs = repo.head.commit.diff(base_commit)
+
+    except git.GitCommandError as e:
+        print(f"Error calculating diff against 'origin/{base_ref}': {e}. The branch might not exist.")
+        return {}
     except Exception as e:
-        print(f"Error calculating diff against '{base_branch}': {e}")
+        print(f"An unexpected error occurred during diff calculation: {e}")
         return {}
 
     changed_files = {}
     for diff in diffs:
         file_path = diff.a_path or diff.b_path
-        if file_path.endswith(extensions_to_check):
+        if file_path and file_path.endswith(extensions_to_check):
             try:
-                diff_content = diff.diff.decode('utf-8') if diff.diff else ""
+                diff_content = diff.diff.decode('utf-8') if diff.diff is not None else ""
                 changed_files[file_path] = diff_content
             except (UnicodeDecodeError, AttributeError):
                 print(f"Warning: Could not decode diff for {file_path}. Skipping.")
-    
+        
     return changed_files
 
 
