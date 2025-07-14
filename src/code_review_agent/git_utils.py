@@ -69,38 +69,43 @@ def post_pr_comment(issue: CodeIssue, file_path: str):
 
 
 def get_pr_diff(repo_path: str, allowed_extensions: Optional[List[str]] = None) -> Dict[str, str]:
+    """
+    Calculates the diff for a Pull Request using the correct "merge base" strategy.
+    """
     if allowed_extensions is None:
         extensions_to_check = tuple(DEFAULT_EXTENSIONS)
     else:
         extensions_to_check = tuple(allowed_extensions)
-        
+            
     repo = git.Repo(repo_path, search_parent_directories=True)
     
-    base_branch = os.environ.get('GITHUB_BASE_REF', 'main')
-    print(f"Info: Comparing HEAD against base branch: {base_branch}")
-
     try:
         base_ref = os.environ.get('GITHUB_BASE_REF')
         if not base_ref:
-            print("Info: GITHUB_BASE_REF not set. Trying to determine the default branch (e.g., main/master).")
             remote_info = repo.git.remote('show', 'origin')
             for line in remote_info.split('\n'):
                 if 'HEAD branch' in line:
                     base_ref = line.split(':')[1].strip()
                     break
-        
         if not base_ref:
-            print("Warning: Could not determine default branch. Falling back to 'main'.")
             base_ref = 'main'
 
-        print(f"Info: Comparing HEAD against base branch: '{base_ref}'")
+        print(f"Info: Base branch determined as: '{base_ref}'")
 
+        head_commit = repo.head.commit
         repo.git.fetch('origin', base_ref)
         base_commit = repo.commit(f'origin/{base_ref}')
-        diffs = repo.head.commit.diff(base_commit)
+        
+        merge_base = repo.merge_base(head_commit, base_commit)
+        
+        if not merge_base:
+             print("Warning: Could not find a merge base. Diffing against base branch directly.")
+             diffs = repo.head.commit.diff(base_commit)
+        else:
+             diffs = head_commit.diff(merge_base[0])
 
     except git.GitCommandError as e:
-        print(f"Error calculating diff against 'origin/{base_ref}': {e}. The branch might not exist.")
+        print(f"Error calculating diff against 'origin/{base_ref}': {e}.")
         return {}
     except Exception as e:
         print(f"An unexpected error occurred during diff calculation: {e}")
@@ -111,13 +116,13 @@ def get_pr_diff(repo_path: str, allowed_extensions: Optional[List[str]] = None) 
         file_path = diff.a_path or diff.b_path
         if file_path and file_path.endswith(extensions_to_check):
             try:
-                diff_content = diff.diff.decode('utf-8') if diff.diff is not None else ""
+
+                diff_content = diff.diff.decode('utf-8', errors='ignore') if diff.diff else ""
                 changed_files[file_path] = diff_content
-            except (UnicodeDecodeError, AttributeError):
-                print(f"Warning: Could not decode diff for {file_path}. Skipping.")
+            except Exception:
+                print(f"Warning: Could not get diff content for {file_path}. Skipping.")
         
     return changed_files
-
 
 def get_staged_diff(repo_path: str, allowed_extensions: Optional[List[str]] = None) -> Dict[str, str]:
 
