@@ -12,7 +12,6 @@ def get_client() -> OpenAI:
         _client = instructor.patch(OpenAI())
     return _client
 
-# --- END OF CHANGES ---
 
 
 def review_code_changes(file_path: str, file_diff: str, full_file_content: str) -> ReviewResult:
