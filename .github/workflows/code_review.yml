@@ -70,19 +70,32 @@ jobs:
           git checkout pr_branch
 
       - name: Checkout Target Code for Review (This Repo)
-        if: github.event.inputs.mode != 'external_pr'
+        if: github.event_name == 'pull_request' || github.event.inputs.mode == 'this_repo_pr'
         uses: actions/checkout@v4
         with:
           path: 'target_repo'
           fetch-depth: 0
-
+      - name: Determine Run Mode
+        id: run_mode
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Якщо запуск ручний
+            if [[ "${{ github.event.inputs.mode }}" == "external_pr" ]]; then
+              echo "DRY_RUN=true" >> $GITHUB_ENV
+            else
+              echo "DRY_RUN=${{ github.event.inputs.dry_run_this_repo }}" >> $GITHUB_ENV
+            fi
+          else
+            # Якщо запуск автоматичний на PR
+            echo "DRY_RUN=false" >> $GITHUB_ENV
+          fi
       - name: Run Code Review Agent
         working-directory: ./agent
         run: |
           export TARGET_REPO_PATH="../target_repo"
           poetry run python main.py
         env:
-          DRY_RUN: ${{ github.event.inputs.mode == 'external_pr' || github.event.inputs.dry_run_this_repo == 'true' }}
+          DRY_RUN: ${{ env.DRY_RUN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.inputs.target_pr_number || github.event.pull_request.number }}
