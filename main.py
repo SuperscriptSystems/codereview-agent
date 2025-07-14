@@ -1,42 +1,52 @@
 import os
 from dotenv import load_dotenv
-import git
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.output_parser import StrOutputParser
+from src.code_review_agent.git_utils import get_staged_diff
+from src.code_review_agent.reviewer import review_code_changes
 
-load_dotenv()
+SUPPORTED_FILE_EXTENSIONS = [
+    '.py',
+    '.js',
+    '.ts',
+    '.yaml',
+    '.json',
+    '.md',
+    '.cs',
+    '.csproj',  
+    '.sln',    
+    '.vb',      
+    '.fs'       
+]
 
-if not os.getenv("OPENAI_API_KEY"):
-    print("Error: OPENAI_API_KEY not found. Make sure it is in the .env file")
-    exit()
+def run_agent():
+    load_dotenv()
+    if not os.getenv("OPENAI_API_KEY"):
+        raise EnvironmentError("OPENAI_API_KEY not found in .env file.")
 
-try:
-    repo = git.Repo('.')
-    last_commit = repo.head.commit
-    print(f"✅ GitPython is working. The last commit: {last_commit.hexsha[:7]} - {last_commit.message.strip()}")
+    print("🚀 Starting Code Review Agent...")
+    staged_diffs = get_staged_diff(allowed_extensions=SUPPORTED_FILE_EXTENSIONS)
 
-except git.InvalidGitRepositoryError:
-    print("Error: This folder is not a Git repository. Please run 'git init'")
-    exit()
+    if not staged_diffs:
+        print(f"✅ No staged files with supported extensions found to review. All clean!")
+        return
+
+    total_issues = 0
+    for file_path, diff in staged_diffs.items():
+        review_result = review_code_changes(file_path, diff)
+
+        if not review_result.is_ok():
+            print(f"🚨 Found issues in file: {file_path}")
+            for issue in review_result.issues:
+                total_issues += 1
+                print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
+        else:
+            print(f"✅ File {file_path} looks good!")
+
+    print("\n---")
+    if total_issues > 0:
+        print(f"🏁 Review complete. Found {total_issues} issue(s) in total.")
+    else:
+        print("🎉 Great job! All reviewed files look good.")
 
 
-print("\n🤖 Launching the LangChain demo...")
-
-llm = ChatOpenAI(model="gpt-3.5-turbo")
-
-prompt_template = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant who answers questions about software development."),
-    ("user", "{question}")
-])
-
-
-chain = prompt_template | llm | StrOutputParser()
-
-
-question = "what is the best practice for managing dependencies in Python projects?"
-response = chain.invoke({"question": question})
-
-print(f"❓ Question: {question}")
-print(f"💡 LLM Response: {response}")
-print("\n✅ Project done successfully!")
+if __name__ == "__main__":
+    run_agent()
