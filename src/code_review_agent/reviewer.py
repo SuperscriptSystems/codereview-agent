@@ -15,7 +15,7 @@ def get_client() -> OpenAI:
 # --- END OF CHANGES ---
 
 
-def review_code_changes(file_path: str, file_diff: str) -> ReviewResult:
+def review_code_changes(file_path: str, file_diff: str, file_content: str) -> ReviewResult:
     
     print(f"🤖 Analyzing file: {file_path}...")
 
@@ -40,11 +40,21 @@ def review_code_changes(file_path: str, file_diff: str) -> ReviewResult:
         "- **For JavaScript/TypeScript files (.js, .ts):** Follow modern best practices (e.g., use of `const`/`let`, async/await over promises)."
     )
 
-    user_prompt = (
-        f"Please review the following git diff for the file '{file_path}'.\n"
-        "Analyze the changes according to your instructions and return a list of any issues you find.\n\n"
-        f"```diff\n{file_diff}\n```"
-    )
+    user_prompt = f"""
+    Please review the following changes for the file `{file_path}`.
+
+    **Full File Content:**
+    ```
+    {file_content}
+    ```
+
+    **Git Diff of Changes to Review:**
+    ```diff
+    {file_diff}
+    ```
+
+    Analyze the diff within the context of the full file and return a list of issues.
+    """
 
     try:
         client = get_client()

@@ -1,0 +1,36 @@
+supported_extensions:
+  # Python
+  - '.py'
+
+  # Web (JavaScript, TypeScript, Styles)
+  - '.js'
+  - '.ts'
+  - '.jsx'
+  - '.tsx'
+  - '.html'
+  - '.css'
+  - '.scss'
+
+  # .NET Ecosystem
+  - '.cs' # C# source files
+  - '.csproj' # C# project files
+  - '.sln' # Solution files
+  - '.vb' # VB.NET source files
+  - '.fs' # F# source files
+
+  # Configuration & Data
+  - '.yaml'
+  - '.yml'
+  - '.json'
+  - '.toml'
+
+  # Documentation & Scripts
+  - '.md'
+  - '.sh'
+  - 'Dockerfile'
+
+excluded_paths:
+  - 'dist/'
+  - 'build/'
+  - 'node_modules/'
+  - 'venv/'
