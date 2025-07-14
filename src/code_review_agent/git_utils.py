@@ -11,10 +11,10 @@ DEFAULT_EXTENSIONS = [
 ]
 
 
-def get_pr_commit_messages() -> str:
+def get_pr_commit_messages(repo_path: str) -> str:
     """Fetches all commit messages from the current Pull Request."""
     try:
-        repo = git.Repo('.', search_parent_directories=True)
+        repo = git.Repo(repo_path, search_parent_directories=True)
 
         messages = [commit.message.strip() for commit in repo.iter_commits('HEAD', max_count=5)]
         return "\n---\n".join(messages)
@@ -68,13 +68,13 @@ def post_pr_comment(issue: CodeIssue, file_path: str):
         print(f"❌ Failed to post comment to GitHub: {e}")
 
 
-def get_pr_diff(allowed_extensions: Optional[List[str]] = None) -> Dict[str, str]:
+def get_pr_diff(repo_path: str, allowed_extensions: Optional[List[str]] = None) -> Dict[str, str]:
     if allowed_extensions is None:
         extensions_to_check = tuple(DEFAULT_EXTENSIONS)
     else:
         extensions_to_check = tuple(allowed_extensions)
         
-    repo = git.Repo('.', search_parent_directories=True)
+    repo = git.Repo(repo_path, search_parent_directories=True)
     
     base_branch = os.environ.get('GITHUB_BASE_REF', 'main')
     print(f"Info: Comparing HEAD against base branch: {base_branch}")
@@ -100,7 +100,7 @@ def get_pr_diff(allowed_extensions: Optional[List[str]] = None) -> Dict[str, str
     return changed_files
 
 
-def get_staged_diff(allowed_extensions: Optional[List[str]] = None) -> Dict[str, str]:
+def get_staged_diff(repo_path: str, allowed_extensions: Optional[List[str]] = None) -> Dict[str, str]:
 
     if allowed_extensions is None:
         extensions_to_check = tuple(DEFAULT_EXTENSIONS)
@@ -108,7 +108,7 @@ def get_staged_diff(allowed_extensions: Optional[List[str]] = None) -> Dict[str,
         extensions_to_check = tuple(allowed_extensions)
 
     try:
-        repo = git.Repo('.', search_parent_directories=True)
+        repo = git.Repo(repo_path, search_parent_directories=True)
     except git.InvalidGitRepositoryError:
         print("Error: This is not a Git repository. Please run 'git init'.")
         return {}

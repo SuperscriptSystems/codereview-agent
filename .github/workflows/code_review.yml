@@ -59,9 +59,11 @@ jobs:
       - name: Checkout Target Code for Review
         if: github.event.inputs.mode == 'external_pr'
         run: |
-          git config --global credential.helper ""
+          REPO_URL="${{ github.event.inputs.target_repo_url }}"
+          REPO_PATH=$(echo "$REPO_URL" | sed 's|https://||')
+          CLONE_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@$REPO_PATH"
 
-          git clone --depth=1 ${{ github.event.inputs.target_repo_url }} target_repo
+          git clone --depth=1 "$CLONE_URL" target_repo
 
           cd target_repo
           git fetch --depth=1 origin pull/${{ github.event.inputs.target_pr_number }}/head:pr_branch
@@ -75,8 +77,10 @@ jobs:
           fetch-depth: 0
 
       - name: Run Code Review Agent
-        working-directory: ./target_repo #
-        run: poetry run python ../agent/main.py
+        working-directory: ./agent
+        run: |
+          export TARGET_REPO_PATH="../target_repo"
+          poetry run python main.py
         env:
           DRY_RUN: ${{ github.event.inputs.mode == 'external_pr' || github.event.inputs.dry_run_this_repo == 'true' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

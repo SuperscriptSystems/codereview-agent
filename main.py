@@ -57,13 +57,14 @@ def generate_dry_run_report(all_issues, files_with_issues):
     print("✅ Generated dry run report: review_report.md")
 
 def run_agent():
+    
     load_dotenv()
     if not os.getenv("OPENAI_API_KEY"):
         raise EnvironmentError("OPENAI_API_KEY not found in .env file or environment variables.")
 
     config = load_config()
     supported_extensions = config.get('supported_extensions', DEFAULT_CONFIG['supported_extensions'])
-
+    target_path = os.environ.get('TARGET_REPO_PATH', '.')
     is_pr_mode = os.environ.get('GITHUB_ACTIONS') == 'true'
     is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
@@ -75,13 +76,10 @@ def run_agent():
         print("💻 Starting Code Review Agent in local staged mode...")
 
     # Phase 1: Context Building
-    changed_files_map = get_pr_diff(allowed_extensions=supported_extensions) if is_pr_mode else get_staged_diff(allowed_extensions=supported_extensions)
-    if not changed_files_map:
-        print("✅ No relevant file changes found to review.")
-        return
+    changed_files_map = get_pr_diff(target_path, allowed_extensions=supported_extensions) if is_pr_mode else get_staged_diff(target_path, allowed_extensions=supported_extensions)
 
-    commit_messages = get_pr_commit_messages() if is_pr_mode else "Local changes"
-    file_structure = get_file_structure()
+    commit_messages = get_pr_commit_messages(target_path) if is_pr_mode else "Local changes"
+    file_structure = get_file_structure(root_dir=target_path)
     
     final_context_files = list(changed_files_map.keys())
     current_tokens = 0
