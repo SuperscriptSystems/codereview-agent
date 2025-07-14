@@ -1,41 +1,27 @@
 import os
 import yaml
 from dotenv import load_dotenv
-from src.code_review_agent.git_utils import get_pr_diff, get_staged_diff
+from src.code_review_agent.git_utils import (
+    get_pr_diff, get_staged_diff, get_pr_commit_messages, get_file_structure
+)
 from src.code_review_agent.reviewer import review_code_changes
-from src.code_review_agent.github_client import post_review_comment
+from src.code_review_agent.github_client import post_review_comment, post_summary_comment
+from src.code_review_agent.context_builder import find_required_context_files
+from src.code_review_agent.models import CodeIssue
 
 DEFAULT_CONFIG = {
     'supported_extensions': [
-        # Python
-        '.py',
-        # Web
-        '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.scss',
-        # Config & Data
-        '.yaml', '.yml', '.json', '.toml',
-        # .NET Ecosystem
-        '.cs', '.csproj', '.sln', '.vb', '.fs',
-        # Docs & Scripts
-        '.md', '.sh', 'Dockerfile'
+        '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.scss',
+        '.yaml', '.yml', '.json', '.toml', '.cs', '.csproj', '.sln',
+        '.vb', '.fs', '.md', '.sh', 'Dockerfile'
     ]
 }
 
-def load_config() -> dict:
-    try:
-        with open('.codereview.yml', 'r', encoding='utf-8') as f:
-            print("Info: Loading configuration from .codereview.yml")
-            config = yaml.safe_load(f)
-            if isinstance(config, dict) and 'supported_extensions' in config:
-                return config
-            else:
-                print("Warning: .codereview.yml is malformed. Using default configuration.")
-                return DEFAULT_CONFIG
-    except FileNotFoundError:
-        print("Info: .codereview.yml not found. Using default configuration.")
-        return DEFAULT_CONFIG
-    except Exception as e:
-        print(f"Warning: Could not load or parse .codereview.yml: {e}. Using default configuration.")
-        return DEFAULT_CONFIG
+MAX_ITERATIONS = 3
+MAX_CONTEXT_SIZE_TOKENS = 100000 
+
+def count_tokens(text: str) -> int:
+    return len(text) // 4
 
 def load_config() -> dict:
     try:
@@ -53,11 +39,25 @@ def load_config() -> dict:
     except Exception as e:
         print(f"Warning: Could not load or parse .codereview.yml: {e}. Using default configuration.")
         return DEFAULT_CONFIG
+
+def generate_dry_run_report(all_issues, files_with_issues):
+    report = "# 🤖 Code Review Report (Dry Run)\n\n"
+    report += f"Found **{len(all_issues)}** total issues.\n\n"
+    
+    for file_path, issues in files_with_issues.items():
+        report += f"### File: `{file_path}`\n\n"
+        for issue in issues:
+            report += f"- **L{issue.line_number} [{issue.issue_type}]**: {issue.comment}\n"
+            if issue.suggestion:
+                report += f"  ```suggestion\n  {issue.suggestion}\n  ```\n"
+        report += "\n---\n"
+        
+    with open("review_report.md", "w", encoding="utf-8") as f:
+        f.write(report)
+    print("✅ Generated dry run report: review_report.md")
 
 def run_agent():
-
     load_dotenv()
-    
     if not os.getenv("OPENAI_API_KEY"):
         raise EnvironmentError("OPENAI_API_KEY not found in .env file or environment variables.")
 
@@ -65,48 +65,111 @@ def run_agent():
     supported_extensions = config.get('supported_extensions', DEFAULT_CONFIG['supported_extensions'])
 
     is_pr_mode = os.environ.get('GITHUB_ACTIONS') == 'true'
+    is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
-    if is_pr_mode:
+    if is_dry_run:
+        print("🧪 Starting Code Review Agent in DRY RUN mode...")
+    elif is_pr_mode:
         print("🚀 Starting Code Review Agent in PR mode...")
-        changed_files = get_pr_diff(allowed_extensions=supported_extensions)
     else:
-        print("🚀 Starting Code Review Agent in local staged mode...")
-        changed_files = get_staged_diff(allowed_extensions=supported_extensions)
+        print("💻 Starting Code Review Agent in local staged mode...")
 
-    if not changed_files:
+    # Phase 1: Context Building
+    changed_files_map = get_pr_diff(allowed_extensions=supported_extensions) if is_pr_mode else get_staged_diff(allowed_extensions=supported_extensions)
+    if not changed_files_map:
         print("✅ No relevant file changes found to review.")
         return
 
-    total_issues = 0
-    for file_path, diff in changed_files.items():
-        full_content = ""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                full_content = f.read()
-        except FileNotFoundError:
-            print(f"Info: File '{file_path}' not found. It may have been deleted.")
-        except Exception as e:
-            print(f"Warning: Could not read file '{file_path}': {e}. Skipping content.")
+    commit_messages = get_pr_commit_messages() if is_pr_mode else "Local changes"
+    file_structure = get_file_structure()
+    
+    final_context_files = list(changed_files_map.keys())
+    current_tokens = 0
 
-        review_result = review_code_changes(file_path, diff, full_content)
+    for i in range(MAX_ITERATIONS):
+        print(f"\n--- Context Building Iteration {i + 1}/{MAX_ITERATIONS} ---")
+        
+        context_requirements = find_required_context_files(
+            changed_files_map=changed_files_map,
+            commit_messages=commit_messages,
+            full_file_structure=file_structure,
+            current_context_files=final_context_files
+        )
+
+        if context_requirements.is_sufficient or not context_requirements.required_additional_files:
+            print("✅ Context is now sufficient.")
+            break
+
+        new_files_to_add = [
+            f for f in context_requirements.required_additional_files if f not in final_context_files
+        ]
+
+        if not new_files_to_add:
+            print("✅ Agent requested existing files. Context is considered sufficient.")
+            break
+            
+        print(f"➕ Adding {len(new_files_to_add)} new files to context: {new_files_to_add}")
+        final_context_files.extend(new_files_to_add)
+
+        current_content_for_token_check = ""
+        for file_path in final_context_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    current_content_for_token_check += f.read()
+            except FileNotFoundError:
+                pass
+        
+        current_tokens = count_tokens(current_content_for_token_check)
+        if current_tokens > MAX_CONTEXT_SIZE_TOKENS:
+            print(f"⚠️ Warning: Context size ({current_tokens} tokens) exceeds limit. Stopping context building.")
+            break
+    else:
+        print(f"⚠️ Warning: Reached max iterations ({MAX_ITERATIONS}). Proceeding with current context.")
+
+    print(f"\nFinal context includes {len(final_context_files)} files: {final_context_files}")
+
+    # Phase 2: Code Review
+    all_issues: list[CodeIssue] = []
+    files_with_issues = {}
+
+    context_content_full = ""
+    for context_file_path in final_context_files:
+        try:
+            with open(context_file_path, 'r', encoding='utf-8') as f:
+                context_content_full += f"--- START OF FILE: {context_file_path} ---\n"
+                context_content_full += f.read()
+                context_content_full += f"\n--- END OF FILE: {context_file_path} ---\n\n"
+        except FileNotFoundError:
+             context_content_full += f"--- FILE NOT FOUND: {context_file_path} ---\n\n"
+
+    for file_path, diff in changed_files_map.items():
+        review_result = review_code_changes(file_path, diff, context_content_full)
 
         if not review_result.is_ok():
-            total_issues += len(review_result.issues)
-            print(f"🚨 Found {len(review_result.issues)} issue(s) in file: {file_path}")
-            for issue in review_result.issues:
-                if is_pr_mode:
-                    post_review_comment(issue, file_path)
-                else:
-                    print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
-        else:
-            print(f"✅ File {file_path} looks good!")
+            all_issues.extend(review_result.issues)
+            files_with_issues[file_path] = review_result.issues
+    
+    # Reporting
+    if not all_issues:
+        print("🎉 Great job! No issues found.")
+        return
 
-    print("\n---")
-    if total_issues > 0:
-        print(f"🏁 Review complete. Found {total_issues} issue(s) in total.")
-    else:
-        print("🎉 Great job! All reviewed files look good.")
+    print(f"🏁 Review complete. Found {len(all_issues)} issue(s) in total.")
 
+    if is_dry_run:
+        generate_dry_run_report(all_issues, files_with_issues)
+    elif is_pr_mode:
+        for file_path, issues in files_with_issues.items():
+            for issue in issues:
+                post_review_comment(issue, file_path)
+        post_summary_comment(all_issues)
+    else: # Local mode
+        for file_path, issues in files_with_issues.items():
+            print(f"\n🚨 Issues in `{file_path}`:")
+            for issue in issues:
+                 print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
+                 if issue.suggestion:
+                     print(f"    💡 Suggestion: {issue.suggestion}")
 
 if __name__ == "__main__":
     run_agent()

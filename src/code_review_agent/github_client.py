@@ -1,6 +1,7 @@
 import os
 from github import Github, GithubException
 from .models import CodeIssue
+from collections import Counter
 
 _github_client = None
 _pull_request = None
@@ -46,3 +47,32 @@ def post_review_comment(issue: CodeIssue, file_path: str):
               f"This line might not be part of the PR changes. Error: {e.data['errors'][0]['message']}")
     except Exception as e:
         print(f"❌ An unexpected error occurred while posting a comment to GitHub: {e}")
+
+
+
+def post_summary_comment(all_issues: list[CodeIssue]):
+    print("📝 Generating and posting summary comment...")
+    try:
+        pr = _get_pull_request()
+        
+
+        total_issues = len(all_issues)
+        issue_counts = Counter(issue.issue_type for issue in all_issues)
+        
+
+        summary_body = f"## 🤖 Code Review Summary\n\n"
+        summary_body += f"I've analyzed the changes and found **{total_issues} issue(s)** that may require your attention.\n\n"
+        
+        if issue_counts:
+            summary_body += "### Issue Breakdown:\n"
+            for issue_type, count in issue_counts.items():
+                summary_body += f"- **{issue_type}:** {count} issue(s)\n"
+        
+        summary_body += "\n*Please see the detailed comments on the \"Files changed\" tab for more context.*"
+
+
+        pr.create_issue_comment(summary_body)
+        print("✅ Successfully posted the summary comment.")
+
+    except Exception as e:
+        print(f"❌ An unexpected error occurred while posting the summary comment: {e}")

@@ -10,6 +10,41 @@ DEFAULT_EXTENSIONS = [
     '.cs', '.csproj', '.sln', '.vb', '.fs'
 ]
 
+
+def get_pr_commit_messages() -> str:
+    """Fetches all commit messages from the current Pull Request."""
+    try:
+        repo = git.Repo('.', search_parent_directories=True)
+
+        messages = [commit.message.strip() for commit in repo.iter_commits('HEAD', max_count=5)]
+        return "\n---\n".join(messages)
+    except Exception as e:
+        print(f"Warning: Could not get commit messages: {e}")
+        return "Could not retrieve commit messages."
+
+def get_file_structure(root_dir='.', ignored_paths=None, ignored_extensions=None) -> str:
+
+    if ignored_paths is None:
+        ignored_paths = {'node_modules', 'venv', '.git', '__pycache__', 'dist', 'build'}
+    if ignored_extensions is None:
+        ignored_extensions = {'.dll', '.so', '.png', '.jpg', '.jpeg', '.gif', '.min.js', '.lock'}
+
+    structure = []
+    for root, dirs, files in os.walk(root_dir):
+        # Виключаємо ігноровані директорії
+        dirs[:] = [d for d in dirs if d not in ignored_paths]
+        
+        level = root.replace(root_dir, '').count(os.sep)
+        indent = ' ' * 4 * level
+        structure.append(f"{indent}{os.path.basename(root)}/")
+        
+        sub_indent = ' ' * 4 * (level + 1)
+        for f in files:
+            if not any(f.endswith(ext) for ext in ignored_extensions):
+                structure.append(f"{sub_indent}{f}")
+                
+    return "\n".join(structure)
+
 def post_pr_comment(issue: CodeIssue, file_path: str):
     try:
         token = os.environ['GITHUB_TOKEN']

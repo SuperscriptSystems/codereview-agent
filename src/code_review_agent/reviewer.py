@@ -15,7 +15,7 @@ def get_client() -> OpenAI:
 # --- END OF CHANGES ---
 
 
-def review_code_changes(file_path: str, file_diff: str, file_content: str) -> ReviewResult:
+def review_code_changes(file_path: str, file_diff: str, full_file_content: str) -> ReviewResult:
     
     print(f"🤖 Analyzing file: {file_path}...")
 
@@ -41,20 +41,19 @@ def review_code_changes(file_path: str, file_diff: str, file_content: str) -> Re
     )
 
     user_prompt = f"""
-    Please review the following changes for the file `{file_path}`.
+        Please perform a code review on the file `{file_path}`.
 
-    **Full File Content:**
-    ```
-    {file_content}
-    ```
-
-    **Git Diff of Changes to Review:**
-    ```diff
-    {file_diff}
-    ```
-
-    Analyze the diff within the context of the full file and return a list of issues.
-    """
+        **Here is the git diff for the changes made to `{file_path}`:**
+        ```diff
+        {file_diff}
+        Use code with caution.
+        Python
+        For full context, here is the content of all relevant files in the project:
+        Generated code
+        {full_file_content} # Ця змінна тепер буде містити ВЕСЬ контекст
+        Use code with caution.
+        Analyze the diff for {file_path} within the provided full context. Focus on how the changes interact with other files.
+        """
 
     try:
         client = get_client()
