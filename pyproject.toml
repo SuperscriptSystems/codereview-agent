@@ -6,17 +6,20 @@ authors = [
     {name = "Mykhailo",email = "mykhailo.ulanovych@exilion.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
-openai = "^1.23.6"
-instructor = "^1.2.2"
-gitpython = "^3.1.43"
-python-dotenv = "^1.0.1"
-pyyaml = "^6.0.1"
-pygithub = "^2.3.0"
+packages = [
+    { include = "code_review_agent", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+openai = ">=1.23.6"
+instructor = ">=1.2.2"
+gitpython = ">=3.1.43"
+python-dotenv = ">=1.0.1"
+pyyaml = ">=6.0.1"
+pygithub = ">=2.3.0"
 
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = {find = {where = ["src"]}}
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
