@@ -1,10 +1,8 @@
 name: Code Review Agent
 
 on:
-
   pull_request:
     types: [opened, synchronize]
-
 
   workflow_dispatch:
     inputs:
@@ -14,13 +12,12 @@ on:
         default: 'external_pr'
         type: choice
         options:
-          - 'this_repo_pr' 
-          - 'external_pr' 
-
+          - 'this_repo_pr'
+          - 'external_pr'
 
       target_repo_url:
         description: 'URL of the target public repository (e.g., https://github.com/user/repo)'
-        required: false 
+        required: false
       target_pr_number:
         description: 'Number of the Pull Request to analyze'
         required: false
@@ -46,12 +43,12 @@ jobs:
       - name: Checkout Agent Code
         uses: actions/checkout@v4
         with:
-          path: 'agent' 
+          path: 'agent'
 
       - name: Set up Python and Poetry
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.13'
       - name: Install Poetry
         run: pip install poetry
 
@@ -59,15 +56,12 @@ jobs:
         working-directory: ./agent
         run: poetry install
 
-
       - name: Checkout Target Code for Review
 
         if: github.event.inputs.mode == 'external_pr'
         run: |
-          # Клонуємо сторонній репозиторій
           git clone ${{ github.event.inputs.target_repo_url }} target_repo
           cd target_repo
-          # Переходимо у гілку PR
           git fetch origin pull/${{ github.event.inputs.target_pr_number }}/head:pr_branch
           git checkout pr_branch
 
@@ -78,17 +72,15 @@ jobs:
           path: 'target_repo'
           fetch-depth: 0
 
-
       - name: Run Code Review Agent
         working-directory: ./target_repo #
-        run: poetry run python ../agent/main.py 
+        run: poetry run python ../agent/main.py
         env:
           DRY_RUN: ${{ github.event.inputs.mode == 'external_pr' || github.event.inputs.dry_run_this_repo == 'true' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.inputs.target_pr_number || github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.event.inputs.target_repo_url || github.repository }}
-
 
       - name: Upload Review Artifact
         uses: actions/upload-artifact@v4
