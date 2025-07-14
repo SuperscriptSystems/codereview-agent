@@ -59,9 +59,10 @@ jobs:
       - name: Checkout Target Code for Review
         if: github.event.inputs.mode == 'external_pr'
         run: |
-          REPO_URL=${{ github.event.inputs.target_repo_url }}
-          ANON_REPO_URL="https://git:${REPO_URL#https://}"
-          git clone --depth=1 $ANON_REPO_URL target_repo
+          git config --global credential.helper ""
+
+          git clone --depth=1 ${{ github.event.inputs.target_repo_url }} target_repo
+
           cd target_repo
           git fetch --depth=1 origin pull/${{ github.event.inputs.target_pr_number }}/head:pr_branch
           git checkout pr_branch
