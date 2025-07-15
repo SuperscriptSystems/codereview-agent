@@ -1,71 +1,58 @@
-import instructor
-from openai import OpenAI
+from typing import Dict, List
 from .models import ReviewResult
+from .llm_client import get_client
 
-_client = None
-
-def get_client() -> OpenAI:
-
-    global _client
-    if _client is None:
-
-        _client = instructor.patch(OpenAI())
-    return _client
-
-
-
-def review_code_changes(file_path: str, file_diff: str, full_file_content: str) -> ReviewResult:
+def run_review(
+    changed_files_to_review: list,
+    full_context_content: Dict[str, str], # {path: content}
+    review_rules: List[str],
+    llm_config: dict,
+) -> Dict[str, ReviewResult]:
     
-    print(f"🤖 Analyzing file: {file_path}...")
+    client = get_client(llm_config.get("provider", "openai"))
+    model = llm_config.get("model_review", "gpt-4o")
+    
+    system_prompt = f"""
+    You are a meticulous and constructive senior software developer performing a code review.
+    Your task is to analyze the provided code changes and identify potential issues.
+    Your feedback must be actionable and precise.
 
-    system_prompt = (
-        "You are an expert code review assistant specializing in multiple languages. Your task is to analyze the "
-        "provided 'git diff' and identify potential issues. Your feedback must be "
-        "tailored to the programming language of the file."
-        "\n\n"
-        "### General Instructions:\n"
-        "- Focus on logic errors, code style violations, potential security vulnerabilities, and suggestions for improvement.\n"
-        "- Do not comment on trivial things or formatting that can be fixed by an auto-formatter.\n"
-        "- If no issues are found, return an empty list.\n"
-        "\n\n"
-        "### Language-Specific Guidelines:\n"
-        "- **For C# files (.cs, .csproj):** Act as a senior .NET developer. Pay close attention to:\n"
-        "  - Adherence to Microsoft's C# Coding Conventions (e.g., PascalCase for methods/properties, camelCase for local variables).\n"
-        "  - Proper use of LINQ (e.g., suggest more efficient queries).\n"
-        "  - Correct async/await patterns (e.g., avoiding `async void`, using `ConfigureAwait(false)` in libraries).\n"
-        "  - Null reference handling (e.g., suggest using null-conditional operators `?.` or checks).\n"
-        "  - Proper use of properties instead of public fields.\n"
-        "- **For Python files (.py):** Follow PEP 8 guidelines and Pythonic best practices.\n"
-        "- **For JavaScript/TypeScript files (.js, .ts):** Follow modern best practices (e.g., use of `const`/`let`, async/await over promises)."
-    )
+    **Key Instructions:**
+    1.  Focus your review ONLY on the files that were explicitly changed in the commit.
+    2.  Use the full context of all provided files to understand dependencies and side effects.
+    3.  If you find no issues in a file, you MUST return an empty list of issues. It is perfectly acceptable to find no problems. This is a critical instruction to reduce hallucinations.
+    4.  If a fix is simple and obvious, provide a direct code suggestion in the `suggestion` field.
+    5.  Adhere to the following custom project rules: {' '.join(review_rules)}
+    """
 
-    user_prompt = f"""
-        Please perform a code review on the file `{file_path}`.
+    review_results = {}
+    context_str = "\n".join([f"--- START OF FILE: {path} ---\n{content}\n--- END OF FILE: {path} ---" for path, content in full_context_content.items()])
 
-        **Here is the git diff for the changes made to `{file_path}`:**
-        ```diff
-        {file_diff}
-        Use code with caution.
-        Python
-        For full context, here is the content of all relevant files in the project:
-        Generated code
-        {full_file_content} # Ця змінна тепер буде містити ВЕСЬ контекст
-        Use code with caution.
-        Analyze the diff for {file_path} within the provided full context. Focus on how the changes interact with other files.
+    for file_path in changed_files_to_review:
+        print(f"🤖 Reviewing file: {file_path}")
+        user_prompt = f"""
+        Please review the file `{file_path}`.
+
+        **Full Context of all Relevant Files:**
+        ```
+        {context_str}
+        ```
+
+        Focus your review on `{file_path}` and provide feedback based on the full context.
         """
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                response_model=ReviewResult,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_retries=1,
+            )
+            review_results[file_path] = response
+        except Exception as e:
+            print(f"\n⚠️ Error reviewing file {file_path}: {e}")
+            review_results[file_path] = ReviewResult(issues=[])
 
-    try:
-        client = get_client()
-        review = client.chat.completions.create(
-            model="gpt-4o",
-            response_model=ReviewResult,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_retries=2,
-        )
-        return review
-    except Exception as e:
-        print(f"An error occurred while analyzing {file_path}: {e}")
-        return ReviewResult(issues=[])
+    return review_results

@@ -1,36 +1,38 @@
-supported_extensions:
-  # Python
-  - '.py'
+llm:
+  provider: 'openai'
+  model_context: 'gpt-4o'
+  model_review: 'gpt-4o'
 
-  # Web (JavaScript, TypeScript, Styles)
-  - '.js'
-  - '.ts'
-  - '.jsx'
-  - '.tsx'
-  - '.html'
-  - '.css'
-  - '.scss'
+filtering:
+  ignored_extensions:
+    - '.dll'
+    - '.so'
+    - '.exe'
+    - '.png'
+    - '.jpg'
+    - '.jpeg'
+    - '.gif'
+    - '.min.js'
+    - '.lock'
+    - '.zip'
+    - '.o'
+    - '.a'
+    - '.obj'
+    - '.lib'
+    - '.pdb'
 
-  # .NET Ecosystem
-  - '.cs' # C# source files
-  - '.csproj' # C# project files
-  - '.sln' # Solution files
-  - '.vb' # VB.NET source files
-  - '.fs' # F# source files
+  ignored_paths:
+    - 'node_modules'
+    - 'venv'
+    - '.venv'
+    - '.git'
+    - '__pycache__'
+    - 'dist'
+    - 'build'
+    - 'target'
 
-  # Configuration & Data
-  - '.yaml'
-  - '.yml'
-  - '.json'
-  - '.toml'
 
-  # Documentation & Scripts
-  - '.md'
-  - '.sh'
-  - 'Dockerfile'
-
-excluded_paths:
-  - 'dist/'
-  - 'build/'
-  - 'node_modules/'
-  - 'venv/'
+review_rules:
+  - 'Pay close attention to potential race conditions in async code.'
+  - 'All public functions must have a docstring.'
+  - 'Avoid using magic numbers; define them as constants.'

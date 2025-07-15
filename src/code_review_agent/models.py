@@ -1,31 +1,26 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
-IssueType = Literal[
-    "LogicError",
-    "CodeStyle",
-    "TestCoverage",
-    "Security",
-    "Suggestion",
-    "Other"
-]
+class ContextRequirements(BaseModel):
+    required_additional_files: List[str] = Field(
+        ..., description="A list of absolute file paths needed to understand the change. Can be empty."
+    )
+    is_sufficient: bool = Field(
+        ..., description="Set to true if the current context is sufficient and no more files are needed."
+    )
+    reasoning: str = Field(
+        ..., description="A brief explanation of why the additional files are needed or why the context is sufficient."
+    )
+
+IssueType = Literal["LogicError", "CodeStyle", "Security", "Suggestion", "TestCoverage", "Clarity", "Performance", "Other"]
 
 class CodeIssue(BaseModel):
-
-    line_number: int = Field(..., description="The line number the issue pertains to.")
-    issue_type: IssueType = Field(..., description="The type of the identified issue.")
-    comment: str = Field(..., description="A detailed comment explaining the issue and suggesting a fix.")
+    line_number: int = Field(..., description="The relevant line number in the file for the issue.")
+    issue_type: IssueType = Field(..., description="The category of the issue.")
+    comment: str = Field(..., description="A detailed, constructive comment about the issue.")
     suggestion: Optional[str] = Field(
-        None, description="If the fix is simple, provide a direct code suggestion to replace the original line."
+        None, description="If applicable, a direct code suggestion to fix the issue."
     )
 
 class ReviewResult(BaseModel):
-    """
-    Represents the final review result for a single file,
-    containing a list of all found issues.
-    """
-    issues: List[CodeIssue] = Field(..., description="A list of code issues found in the file.")
-
-    def is_ok(self) -> bool:
-
-        return not self.issues
+    issues: List[CodeIssue] = Field(..., description="A list of all issues found in a single file.")

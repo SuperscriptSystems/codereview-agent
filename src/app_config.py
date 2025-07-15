@@ -1,2 +1,0 @@
-USER_ROLE_ADMIN = "admin"
-USER_ROLE_GUEST = "guest"
