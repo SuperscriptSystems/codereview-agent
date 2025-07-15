@@ -1,184 +1,79 @@
 import os
-import yaml
-from dotenv import load_dotenv
-from src.code_review_agent.git_utils import (
-    get_pr_diff, get_staged_diff, get_pr_commit_messages, get_file_structure
-)
-from src.code_review_agent.reviewer import review_code_changes
-from src.code_review_agent.github_client import post_review_comment, post_summary_comment
-from src.code_review_agent.context_builder import find_required_context_files
-from src.code_review_agent.models import CodeIssue
+import git
+from typing import List, Dict
 
-DEFAULT_CONFIG = {
-    'supported_extensions': [
-        '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.scss',
-        '.yaml', '.yml', '.json', '.toml', '.cs', '.csproj', '.sln',
-        '.vb', '.fs', '.md', '.sh', 'Dockerfile'
-    ]
-}
-
-MAX_ITERATIONS = 3
-MAX_CONTEXT_SIZE_TOKENS = 100000 
-
-def count_tokens(text: str) -> int:
-    return len(text) // 4
-
-def load_config() -> dict:
-    try:
-        with open('.codereview.yml', 'r', encoding='utf-8') as f:
-            print("Info: Loading configuration from .codereview.yml")
-            config = yaml.safe_load(f)
-            if isinstance(config, dict) and 'supported_extensions' in config:
-                return config
-            else:
-                print("Warning: .codereview.yml is malformed. Using default configuration.")
-                return DEFAULT_CONFIG
-    except FileNotFoundError:
-        print("Info: .codereview.yml not found. Using default configuration.")
-        return DEFAULT_CONFIG
-    except Exception as e:
-        print(f"Warning: Could not load or parse .codereview.yml: {e}. Using default configuration.")
-        return DEFAULT_CONFIG
-
-def generate_dry_run_report(all_issues, files_with_issues):
-    report = "# 🤖 Code Review Report (Dry Run)\n\n"
+def get_diff(repo_path: str, base_ref: str, head_ref: str) -> str:
+    """
+    Calculates the diff between two refs using the merge base strategy.
+    This is the main function for getting diff for a commit range or a branch.
+    """
+    repo = git.Repo(repo_path)
+    base_commit = repo.commit(base_ref)
+    head_commit = repo.commit(head_ref)
     
-    if not all_issues:
-        report += "🎉 **Great job! No issues were found during the review.**\n"
-    else:
-        report += f"Found **{len(all_issues)}** total issue(s).\n\n"
-        for file_path, issues in files_with_issues.items():
-            report += f"### File: `{file_path}`\n\n"
-            for issue in issues:
-                report += f"- **L{issue.line_number} [{issue.issue_type}]**: {issue.comment}\n"
-                if issue.suggestion:
-                    report += f"  ```suggestion\n  {issue.suggestion}\n  ```\n"
-            report += "\n---\n"
+    merge_base = repo.merge_base(base_commit, head_commit)
+    if not merge_base:
+        return repo.git.diff(base_commit, head_commit)
         
-    with open("review_report.md", "w", encoding="utf-8") as f:
-        f.write(report)
-    print("✅ Generated dry run report: review_report.md")
+    return repo.git.diff(merge_base[0], head_commit)
 
-def run_agent():
+def get_staged_diff_content(repo_path: str) -> Dict[str, str]:
+    """
+    Gets the content of all staged files for local review before commit.
+    """
+    repo = git.Repo(repo_path)
+    staged_content = {}
     
-    load_dotenv()
-    if not os.getenv("OPENAI_API_KEY"):
-        raise EnvironmentError("OPENAI_API_KEY not found in .env file or environment variables.")
-
-    config = load_config()
-    supported_extensions = config.get('supported_extensions', DEFAULT_CONFIG['supported_extensions'])
-    target_path = os.environ.get('TARGET_REPO_PATH', '.')
-    is_pr_mode = os.environ.get('GITHUB_ACTIONS') == 'true'
-    is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
-
-    if is_dry_run:
-        print("🧪 Starting Code Review Agent in DRY RUN mode...")
-    elif is_pr_mode:
-        print("🚀 Starting Code Review Agent in PR mode...")
-    else:
-        print("💻 Starting Code Review Agent in local staged mode...")
-
-    # Phase 1: Context Building
-    changed_files_map = get_pr_diff(target_path, allowed_extensions=supported_extensions) if is_pr_mode else get_staged_diff(target_path, allowed_extensions=supported_extensions)
-
-    commit_messages = get_pr_commit_messages(target_path) if is_pr_mode else "Local changes"
-    file_structure = get_file_structure(root_dir=target_path)
-    
-    final_context_files = list(changed_files_map.keys())
-    current_tokens = 0
-
-    for i in range(MAX_ITERATIONS):
-        print(f"\n--- Context Building Iteration {i + 1}/{MAX_ITERATIONS} ---")
-        
-        context_requirements = find_required_context_files(
-            changed_files_map=changed_files_map,
-            commit_messages=commit_messages,
-            full_file_structure=file_structure,
-            current_context_files=final_context_files
-        )
-
-        if context_requirements.is_sufficient or not context_requirements.required_additional_files:
-            print("✅ Context is now sufficient.")
-            break
-
-        new_files_to_add = [
-            f for f in context_requirements.required_additional_files if f not in final_context_files
-        ]
-
-        if not new_files_to_add:
-            print("✅ Agent requested existing files. Context is considered sufficient.")
-            break
-            
-        print(f"➕ Adding {len(new_files_to_add)} new files to context: {new_files_to_add}")
-        final_context_files.extend(new_files_to_add)
-
-        current_content_for_token_check = ""
-        for file_path in final_context_files:
+    diff_index = repo.index.diff(None)
+    for diff_item in diff_index:
+        if diff_item.change_type in ('A', 'M'):
+            file_path = diff_item.a_path
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    current_content_for_token_check += f.read()
-            except FileNotFoundError:
-                pass
+                content = diff_item.b_blob.data_stream.read().decode('utf-8', errors='ignore')
+                staged_content[file_path] = content
+            except Exception as e:
+                print(f"Warning: Could not read staged file {file_path}: {e}")
+                
+    return staged_content
+
+def get_commit_messages(repo_path: str, base_ref: str, head_ref: str) -> str:
+    repo = git.Repo(repo_path)
+    try:
+        commits = list(repo.iter_commits(f'{base_ref}..{head_ref}'))
+        return "\n---\n".join([c.message.strip() for c in commits])
+    except git.GitCommandError:
+        return f"Could not find commits between {base_ref} and {head_ref}"
+
+def get_changed_files_from_diff(diff_text: str) -> List[str]:
+    """Parses a diff text to extract the list of changed file paths."""
+    changed_files = []
+    for line in diff_text.splitlines():
+        if line.startswith('+++ b/'):
+            changed_files.append(line[6:])
+    return changed_files
+
+def get_file_content(repo_path: str, file_path: str) -> str:
+    full_path = os.path.join(repo_path, file_path)
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"File not found: {full_path}"
+    except Exception as e:
+        return f"Could not read file {full_path}: {e}"
+
+def get_file_structure(root_dir: str, ignored_paths: List[str], ignored_extensions: List[str]) -> str:
+    structure = []
+    for root, dirs, files in os.walk(root_dir, topdown=True):
+        dirs[:] = [d for d in dirs if d not in ignored_paths and not d.startswith('.')]
+        level = os.path.relpath(root, root_dir).count(os.sep)
         
-        current_tokens = count_tokens(current_content_for_token_check)
-        if current_tokens > MAX_CONTEXT_SIZE_TOKENS:
-            print(f"⚠️ Warning: Context size ({current_tokens} tokens) exceeds limit. Stopping context building.")
-            break
-    else:
-        print(f"⚠️ Warning: Reached max iterations ({MAX_ITERATIONS}). Proceeding with current context.")
-
-    print(f"\nFinal context includes {len(final_context_files)} files: {final_context_files}")
-
-    # Phase 2: Code Review
-    all_issues: list[CodeIssue] = []
-    files_with_issues = {}
-
-    context_content_full = ""
-    for context_file_path in final_context_files:
-        try:
-            with open(context_file_path, 'r', encoding='utf-8') as f:
-                context_content_full += f"--- START OF FILE: {context_file_path} ---\n"
-                context_content_full += f.read()
-                context_content_full += f"\n--- END OF FILE: {context_file_path} ---\n\n"
-        except FileNotFoundError:
-             context_content_full += f"--- FILE NOT FOUND: {context_file_path} ---\n\n"
-
-    for file_path, diff in changed_files_map.items():
-        review_result = review_code_changes(file_path, diff, context_content_full)
-
-        if not review_result.is_ok():
-            all_issues.extend(review_result.issues)
-            files_with_issues[file_path] = review_result.issues
-    
-
-
-    print(f"🏁 Review complete. Found {len(all_issues)} issue(s) in total.")
-
-    if is_dry_run:
-        generate_dry_run_report(all_issues, files_with_issues)
-    elif is_pr_mode and all_issues:
-        for file_path, issues in files_with_issues.items():
-            for issue in issues:
-                post_review_comment(issue, file_path)
-        post_summary_comment(all_issues)
-    elif not is_pr_mode and all_issues:
-        for file_path, issues in files_with_issues.items():
-            print(f"\n🚨 Issues in `{file_path}`:")
-            for issue in issues:
-                 print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
-                 if issue.suggestion:
-                     print(f"    💡 Suggestion: {issue.suggestion}")    
-    else: # Local mode
-        for file_path, issues in files_with_issues.items():
-            print(f"\n🚨 Issues in `{file_path}`:")
-            for issue in issues:
-                 print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
-                 if issue.suggestion:
-                     print(f"    💡 Suggestion: {issue.suggestion}")
-        # Reporting
-    if not all_issues:
-        print("🎉 Great job! No issues found.")
-        return
-    
-if __name__ == "__main__":
-    run_agent()
+        indent = ' ' * 4 * level
+        structure.append(f"{indent}{os.path.basename(root)}/")
+        
+        sub_indent = ' ' * 4 * (level + 1)
+        for f in files:
+            if not any(f.endswith(ext) for ext in ignored_extensions) and not f.startswith('.'):
+                structure.append(f"{sub_indent}{f}")
+                
+    return "\n".join(structure)

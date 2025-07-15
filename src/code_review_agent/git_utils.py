@@ -3,38 +3,74 @@ import git
 from typing import List, Dict
 
 def get_diff(repo_path: str, base_ref: str, head_ref: str) -> str:
-    repo = git.Repo(repo_path)
+    """Calculates the diff between two refs using the merge base strategy."""
+    repo = git.Repo(repo_path, search_parent_directories=True)
     base_commit = repo.commit(base_ref)
     head_commit = repo.commit(head_ref)
-
+    
     merge_base = repo.merge_base(base_commit, head_commit)
     if not merge_base:
-        raise ValueError("Could not find a common merge base.")
-
+        return repo.git.diff(base_commit, head_commit)
+        
     return repo.git.diff(merge_base[0], head_commit)
 
-def get_commit_messages(repo_path: str, base_ref: str, head_ref: str) -> str:
-    repo = git.Repo(repo_path)
-    commits = list(repo.iter_commits(f'{base_ref}..{head_ref}'))
-    return "\n---\n".join([c.message.strip() for c in commits])
+def get_staged_diff_content(repo_path: str) -> Dict[str, str]:
+    """Gets the content and diff for all staged files."""
+    repo = git.Repo(repo_path, search_parent_directories=True)
+    staged_files = {}
+    
+    try:
+        diff_index = repo.index.diff('HEAD')
+    except git.BadName:
+        diff_index = repo.index.diff(None)
 
-def get_changed_files_content(repo_path: str, diff_text: str) -> Dict[str, str]:
-    changed_files = {}
+    for diff_item in diff_index:
+        file_path = diff_item.a_path
+        try:
+            diff_text = diff_item.diff.decode('utf-8', errors='ignore') if diff_item.diff else ''
+          
+            content = diff_item.b_blob.data_stream.read().decode('utf-8', errors='ignore')
+            staged_files[file_path] = {'diff': diff_text, 'content': content}
+        except Exception as e:
+            print(f"Warning: Could not process staged file {file_path}: {e}")
+            
+    return staged_files
+
+def get_commit_messages(repo_path: str, base_ref: str, head_ref: str) -> str:
+    """Gets commit messages from a commit range."""
+    repo = git.Repo(repo_path, search_parent_directories=True)
+    try:
+        commits = list(repo.iter_commits(f'{base_ref}..{head_ref}'))
+        return "\n---\n".join([c.message.strip() for c in commits])
+    except git.GitCommandError:
+        return f"Could not find commits between {base_ref} and {head_ref}"
+
+def get_changed_files_from_diff(diff_text: str) -> List[str]:
+    """Parses a diff text to extract the list of changed file paths."""
+    changed_files = []
     for line in diff_text.splitlines():
         if line.startswith('+++ b/'):
-            file_path = line[6:]
-            try:
-                with open(os.path.join(repo_path, file_path), 'r', encoding='utf-8') as f:
-                    changed_files[file_path] = f.read()
-            except (FileNotFoundError, UnicodeDecodeError):
-                changed_files[file_path] = f"Could not read file: {file_path}"
+            changed_files.append(line[6:])
     return changed_files
 
+def get_file_content(repo_path: str, file_path: str) -> str:
+    """Gets the full content of a specific file."""
+    full_path = os.path.join(repo_path, file_path)
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"File not found: {full_path}"
+    except Exception as e:
+        return f"Could not read file {full_path}: {e}"
+
 def get_file_structure(root_dir: str, ignored_paths: List[str], ignored_extensions: List[str]) -> str:
+    """Generates a string representation of the file structure."""
     structure = []
     for root, dirs, files in os.walk(root_dir, topdown=True):
         dirs[:] = [d for d in dirs if d not in ignored_paths and not d.startswith('.')]
-        level = root.replace(root_dir, '').count(os.sep)
+        level = os.path.relpath(root, root_dir).count(os.sep)
+        
         indent = ' ' * 4 * level
         structure.append(f"{indent}{os.path.basename(root)}/")
         
@@ -42,12 +78,46 @@ def get_file_structure(root_dir: str, ignored_paths: List[str], ignored_extensio
         for f in files:
             if not any(f.endswith(ext) for ext in ignored_extensions) and not f.startswith('.'):
                 structure.append(f"{sub_indent}{f}")
+                
     return "\n".join(structure)
 
 
-def get_file_content(repo_path: str, file_path: str) -> str:
-    try:
-        with open(os.path.join(repo_path, file_path), 'r', encoding='utf-8') as f:
-            return f.read()
-    except (FileNotFoundError, UnicodeDecodeError):
-        return f"Could not read file: {file_path}"
+def find_files_by_names(root_dir: str, names_to_find: List[str]) -> List[str]:
+    """
+    Recursively searches a directory for files that partially match a list of names.
+    This is used to find files based on module names requested by the context agent.
+
+    Args:
+        root_dir: The root directory of the repository to search in.
+        names_to_find: A list of substrings to search for in filenames (e.g., ['user_service', 'database_client']).
+
+    Returns:
+        A list of relative paths to the found files.
+    """
+    found_files = []
+    names_set = set(names_to_find)
+    
+    if not names_set:
+        return []
+
+    for root, _, files in os.walk(root_dir):
+        if any(ignored in root for ignored in ['.git', 'node_modules', 'venv', '__pycache__']):
+            continue
+
+        for file in files:
+            if any(name_part in file for name_part in names_set):
+                full_path = os.path.join(root, file)
+                relative_path = os.path.relpath(full_path, root_dir)
+                found_files.append(relative_path.replace('\\', '/'))
+    return found_files
+
+def get_file_structure_from_paths(paths: List[str]) -> str:
+    """Creates a file tree string representation from a list of file paths."""
+    if not paths:
+        return "No files in context."
+
+    structure = []
+    for path in sorted(list(set(paths))):
+        structure.append(f"- {path.replace('\\', '/')}")
+        
+    return "\n".join(structure)
