@@ -24,3 +24,6 @@ class CodeIssue(BaseModel):
 
 class ReviewResult(BaseModel):
     issues: List[CodeIssue] = Field(..., description="A list of all issues found in a single file.")
+
+    def is_ok(self) -> bool:
+        return not self.issues

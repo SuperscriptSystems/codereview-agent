@@ -23,6 +23,7 @@ python-dotenv = "^1.0.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.1"
+pytest-mock = "^3.14.1"
 
 [build-system]
 requires = ["poetry-core"]
@@ -30,3 +31,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 code-review-agent = "code_review_agent.cli:app"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
