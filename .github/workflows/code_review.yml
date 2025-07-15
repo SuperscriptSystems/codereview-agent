@@ -78,31 +78,30 @@ jobs:
       - name: Determine Run Mode
         id: run_mode
         run: |
+          IS_DRY_RUN="false" # Значення за замовчуванням
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # Якщо запуск ручний
             if [[ "${{ github.event.inputs.mode }}" == "external_pr" ]]; then
-              echo "DRY_RUN=true" >> $GITHUB_ENV
+              IS_DRY_RUN="true"
             else
-              echo "DRY_RUN=${{ github.event.inputs.dry_run_this_repo }}" >> $GITHUB_ENV
+              IS_DRY_RUN="${{ github.event.inputs.dry_run_this_repo }}"
             fi
-          else
-            # Якщо запуск автоматичний на PR
-            echo "DRY_RUN=false" >> $GITHUB_ENV
           fi
+          echo "is_dry_run=$IS_DRY_RUN" >> "$GITHUB_OUTPUT"
       - name: Run Code Review Agent
         working-directory: ./agent
         run: |
           export TARGET_REPO_PATH="../target_repo"
           poetry run python main.py
         env:
-          DRY_RUN: ${{ env.DRY_RUN }}
+          DRY_RUN: ${{ steps.run_mode.outputs.is_dry_run }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.inputs.target_pr_number || github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.event.inputs.target_repo_url || github.repository }}
 
       - name: Upload Review Artifact
+        if: steps.run_mode.outputs.is_dry_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: code-review-report-${{ github.run_id }}
-          path: target_repo/review_report.md
+          path: agent/review_report.md
