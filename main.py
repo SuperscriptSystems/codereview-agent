@@ -42,15 +42,18 @@ def load_config() -> dict:
 
 def generate_dry_run_report(all_issues, files_with_issues):
     report = "# 🤖 Code Review Report (Dry Run)\n\n"
-    report += f"Found **{len(all_issues)}** total issues.\n\n"
     
-    for file_path, issues in files_with_issues.items():
-        report += f"### File: `{file_path}`\n\n"
-        for issue in issues:
-            report += f"- **L{issue.line_number} [{issue.issue_type}]**: {issue.comment}\n"
-            if issue.suggestion:
-                report += f"  ```suggestion\n  {issue.suggestion}\n  ```\n"
-        report += "\n---\n"
+    if not all_issues:
+        report += "🎉 **Great job! No issues were found during the review.**\n"
+    else:
+        report += f"Found **{len(all_issues)}** total issue(s).\n\n"
+        for file_path, issues in files_with_issues.items():
+            report += f"### File: `{file_path}`\n\n"
+            for issue in issues:
+                report += f"- **L{issue.line_number} [{issue.issue_type}]**: {issue.comment}\n"
+                if issue.suggestion:
+                    report += f"  ```suggestion\n  {issue.suggestion}\n  ```\n"
+            report += "\n---\n"
         
     with open("review_report.md", "w", encoding="utf-8") as f:
         f.write(report)
@@ -147,20 +150,24 @@ def run_agent():
             all_issues.extend(review_result.issues)
             files_with_issues[file_path] = review_result.issues
     
-    # Reporting
-    if not all_issues:
-        print("🎉 Great job! No issues found.")
-        return
+
 
     print(f"🏁 Review complete. Found {len(all_issues)} issue(s) in total.")
 
     if is_dry_run:
         generate_dry_run_report(all_issues, files_with_issues)
-    elif is_pr_mode:
+    elif is_pr_mode and all_issues:
         for file_path, issues in files_with_issues.items():
             for issue in issues:
                 post_review_comment(issue, file_path)
         post_summary_comment(all_issues)
+    elif not is_pr_mode and all_issues:
+        for file_path, issues in files_with_issues.items():
+            print(f"\n🚨 Issues in `{file_path}`:")
+            for issue in issues:
+                 print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
+                 if issue.suggestion:
+                     print(f"    💡 Suggestion: {issue.suggestion}")    
     else: # Local mode
         for file_path, issues in files_with_issues.items():
             print(f"\n🚨 Issues in `{file_path}`:")
@@ -168,6 +175,10 @@ def run_agent():
                  print(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
                  if issue.suggestion:
                      print(f"    💡 Suggestion: {issue.suggestion}")
-
+        # Reporting
+    if not all_issues:
+        print("🎉 Great job! No issues found.")
+        return
+    
 if __name__ == "__main__":
     run_agent()
