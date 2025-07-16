@@ -1,26 +1,37 @@
 from typing import Dict, List
-from .models import ReviewResult
+from .models import ReviewResult,IssueType
 from .llm_client import get_client
 
 def run_review(
     changed_files_to_review: list,
-    full_context_content: Dict[str, str], # {path: content}
+    full_context_content: Dict[str, str],
     review_rules: List[str],
     llm_config: dict,
+    focus_areas: List[IssueType]
 ) -> Dict[str, ReviewResult]:
     
     client = get_client(llm_config.get("provider", "openai"))
     model = llm_config.get("model_review", "gpt-4o")
     
+
+    focus_prompt_part = "Your primary focus for this review should be on the following areas: "
+    focus_prompt_part += ", ".join(focus_areas) + "."
+    if "Security" in focus_areas:
+        focus_prompt_part += " Pay extra special attention to any potential security vulnerabilities like injections, XSS, or data leaks."
+    if "Performance" in focus_areas:
+        focus_prompt_part += " Look for inefficient algorithms, unnecessary database calls, or memory-intensive operations."
+
     system_prompt = f"""
     You are a meticulous and constructive senior software developer performing a code review.
     Your task is to analyze the provided code changes and identify potential issues.
     Your feedback must be actionable and precise.
 
+    **{focus_prompt_part}**
+
     **Key Instructions:**
     1.  Focus your review ONLY on the files that were explicitly changed in the commit.
     2.  Use the full context of all provided files to understand dependencies and side effects.
-    3.  If you find no issues in a file, you MUST return an empty list of issues. It is perfectly acceptable to find no problems. This is a critical instruction to reduce hallucinations.
+    3.  If you find no issues in a file, you MUST return an empty list of issues. This is a critical instruction to reduce hallucinations.
     4.  If a fix is simple and obvious, provide a direct code suggestion in the `suggestion` field.
     5.  Adhere to the following custom project rules: {' '.join(review_rules)}
     """

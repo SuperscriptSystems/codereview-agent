@@ -42,6 +42,12 @@ filtering:
     - '.next'
     - '.pytest_cache'
 
+review_focus:
+  - 'Security'
+  - 'Performance'
+  - 'LogicError'
+  - 'CodeStyle'
+
 review_rules:
   - 'Pay close attention to potential race conditions in async code.'
   - 'All public functions must have a docstring.'

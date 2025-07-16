@@ -82,33 +82,31 @@ def get_file_structure(root_dir: str, ignored_paths: List[str], ignored_extensio
     return "\n".join(structure)
 
 
-def find_files_by_names(root_dir: str, names_to_find: List[str]) -> List[str]:
-    """
-    Recursively searches a directory for files that partially match a list of names.
-    This is used to find files based on module names requested by the context agent.
-
-    Args:
-        root_dir: The root directory of the repository to search in.
-        names_to_find: A list of substrings to search for in filenames (e.g., ['user_service', 'database_client']).
-
-    Returns:
-        A list of relative paths to the found files.
-    """
+def find_files_by_names(
+    root_dir: str, 
+    names_to_find: List[str],
+    ignored_paths: List[str],
+    ignored_extensions: List[str]
+) -> List[str]:
+    """Recursively searches a directory, ignoring specified paths and extensions."""
     found_files = []
     names_set = set(names_to_find)
     
     if not names_set:
         return []
 
-    for root, _, files in os.walk(root_dir):
-        if any(ignored in root for ignored in ['.git', 'node_modules', 'venv', '__pycache__']):
-            continue
+    for root, dirs, files in os.walk(root_dir, topdown=True):
+        dirs[:] = [d for d in dirs if d not in ignored_paths and not d.startswith('.')]
 
         for file in files:
+            if any(file.endswith(ext) for ext in ignored_extensions):
+                continue
+
             if any(name_part in file for name_part in names_set):
                 full_path = os.path.join(root, file)
                 relative_path = os.path.relpath(full_path, root_dir)
                 found_files.append(relative_path.replace('\\', '/'))
+
     return found_files
 
 def get_file_structure_from_paths(paths: List[str]) -> str:
