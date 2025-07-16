@@ -17,7 +17,8 @@ def load_config(repo_path: str) -> dict:
     except FileNotFoundError:
         typer.secho("Info: .codereview.yml not found. Using defaults.", fg=typer.colors.BLUE)
         return {
-            'filtering': {'ignored_extensions': [], 'ignored_paths': []},
+            'filtering': {'ignored_extensions': ['.dll', '.so', '.exe', '.png', '.jpg', '.jpeg', '.svg', '.gif', '.min.js', '.lock', '.zip', '.o', '.a', '.obj', '.lib', '.pdb'], 
+            'ignored_paths': [ 'node_modules', 'venv', '.venv', 'dist', 'build', 'target', '.gitignore', '.git', '__pycache__', 'dist', 'build', 'target', '.next', '.pytest_cache']},
             'review_rules': [],
             'llm': {}
         }

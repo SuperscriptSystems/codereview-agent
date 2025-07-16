@@ -20,6 +20,7 @@ filtering:
     - '.jpg'
     - '.jpeg'
     - '.gif'
+    - '.svg'
     - '.min.js'
     - '.lock'
     - '.zip'
@@ -38,6 +39,8 @@ filtering:
     - 'dist'
     - 'build'
     - 'target'
+    - '.next'
+    - '.pytest_cache'
 
 review_rules:
   - 'Pay close attention to potential race conditions in async code.'
