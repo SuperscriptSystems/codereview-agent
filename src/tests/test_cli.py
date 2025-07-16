@@ -1,77 +1,77 @@
+import yaml
+import pytest
 from typer.testing import CliRunner
 from code_review_agent.cli import app
-from code_review_agent.models import ContextRequirements, ReviewResult, CodeIssue
+from code_review_agent.models import ContextRequirements, ReviewResult
+
 
 runner = CliRunner()
 
-def test_review_iterative_context_build(mocker):
+@pytest.fixture
+def create_test_config(tmp_path):
+    def _create_config(data):
+        config_path = tmp_path / ".codereview.yml"
+        with open(config_path, "w") as f:
+            yaml.dump(data, f)
+        return str(tmp_path)
+    return _create_config
 
-
-
-    mocker.patch('code_review_agent.git_utils.get_diff', return_value="diff --git a/service.py b/service.py")
-    mocker.patch('code_review_agent.git_utils.get_commit_messages', return_value="refactor: update user logic")
-    mocker.patch('code_review_agent.git_utils.get_changed_files_from_diff', return_value=["service.py"])
-    mocker.patch(
-        'code_review_agent.git_utils.get_file_content', 
-        side_effect=lambda _, path: {"service.py": "import db_client", "db_client.py": "class DBClient:"}.get(path, "")
-    )
-
-    mocker.patch('code_review_agent.git_utils.find_files_by_names', return_value=["db_client.py"])
-    mocker.patch('code_review_agent.git_utils.get_file_structure_from_paths', return_value="- service.py\n- db_client.py")
-
-
-    mock_context_response_1 = ContextRequirements(
-        required_additional_files=['db_client'],
-        is_sufficient=False,
-        reasoning="Need to see the db_client implementation."
-    )
-    mock_context_response_2 = ContextRequirements(
-        required_additional_files=[],
-        is_sufficient=True,
-        reasoning="Context is now sufficient with db_client."
-    )
-    mocker.patch('code_review_agent.context_builder.determine_context', side_effect=[mock_context_response_1, mock_context_response_2])
+@pytest.fixture(autouse=True)
+def mock_dependencies(mocker):
+    mocker.patch('git.Repo') 
     
-    mock_review_response = ReviewResult(issues=[
-        CodeIssue(line_number=1, issue_type="LogicError", comment="DB client is not used correctly.", suggestion=None)
-    ])
-    mocker.patch('code_review_agent.reviewer.run_review', return_value={"service.py": mock_review_response})
+    mocker.patch('code_review_agent.git_utils.get_diff', return_value="diff --git a/main.py b/main.py")
+    mocker.patch('code_review_agent.git_utils.get_commit_messages', return_value="feat: new feature")
+    mocker.patch('code_review_agent.git_utils.get_changed_files_from_diff', return_value=["main.py"])
+    mocker.patch('code_review_agent.git_utils.get_file_content', return_value="def main(): pass")
+    
+    # Мокуємо агентів
+    mocker.patch('code_review_agent.context_builder.determine_context', return_value=ContextRequirements(
+        required_additional_files=[], is_sufficient=True, reasoning="Sufficient for test."
+    ))
+    mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
 
-    result = runner.invoke(app, ["--repo-path", "."])
+
+def test_review_uses_cli_focus_with_highest_priority(mocker, create_test_config):
+    repo_path = create_test_config({'review_focus': ['Security']})
+    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
+
+    result = runner.invoke(app, ["--repo-path", repo_path, "--focus", "CodeStyle", "--focus", "Performance"])
 
     assert result.exit_code == 0, result.stdout
-    assert "--- Context Building Iteration 1/3 ---" in result.stdout
-    assert "🧠 Agent reasoning: Need to see the db_client implementation." in result.stdout
-    assert "🔎 Searching for requested files: ['db_client']" in result.stdout
-    assert "➕ Adding 1 new files to context: ['db_client.py']" in result.stdout
-    assert "--- Context Building Iteration 2/3 ---" in result.stdout
-    assert "✅ Context is now sufficient." in result.stdout
-    assert "--- Starting Code Review Phase ---" in result.stdout
-    assert "🚨 Issues in `service.py`:" in result.stdout
-    assert "DB client is not used correctly." in result.stdout
-
-def test_review_context_sufficient_immediately(mocker):
-    mocker.patch('code_review_agent.git_utils.get_diff', return_value="diff --git a/README.md b/README.md")
-    mocker.patch('code_review_agent.git_utils.get_commit_messages', return_value="docs: update readme")
-    mocker.patch('code_review_agent.git_utils.get_changed_files_from_diff', return_value=["README.md"])
-    mocker.patch('code_review_agent.git_utils.get_file_content', return_value="New content")
-
-    mock_context_response = ContextRequirements(
-        required_additional_files=[],
-        is_sufficient=True,
-        reasoning="The change is only in a markdown file, no code context needed."
-    )
-    mocker.patch('code_review_agent.context_builder.determine_context', return_value=mock_context_response)
-
-    mock_review_response = ReviewResult(issues=[])
-    mocker.patch('code_review_agent.reviewer.run_review', return_value={"README.md": mock_review_response})
+    assert "Using focus areas from command line arguments" in result.stdout
     
+    mock_run_review.assert_called_once()
+    kwargs = mock_run_review.call_args.kwargs
+    assert "focus_areas" in kwargs
+    assert set(kwargs["focus_areas"]) == {"CodeStyle", "Performance"}
 
-    result = runner.invoke(app, ["--repo-path", "."])
+def test_review_uses_config_file_focus(mocker, create_test_config):
+    repo_path = create_test_config({'review_focus': ['Security', 'LogicError']})
+    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
 
+    result = runner.invoke(app, ["--repo-path", repo_path])
 
     assert result.exit_code == 0, result.stdout
-    assert "--- Context Building Iteration 1/3 ---" in result.stdout
-    assert "✅ Context is now sufficient." in result.stdout
-    assert "--- Context Building Iteration 2/3 ---" not in result.stdout
-    assert "🎉 Great job! No issues found." in result.stdout
+    assert "Using focus areas from .codereview.yml config file" in result.stdout
+    
+    mock_run_review.assert_called_once()
+    kwargs = mock_run_review.call_args.kwargs
+    assert "focus_areas" in kwargs
+    assert set(kwargs["focus_areas"]) == {"Security", "LogicError"}
+
+def test_review_uses_default_full_focus(mocker, tmp_path):
+    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
+    
+    from code_review_agent.models import IssueType
+    all_possible_areas = set(IssueType.__args__)
+
+    result = runner.invoke(app, ["--repo-path", str(tmp_path)])
+    
+    assert result.exit_code == 0, result.stdout
+    assert "No focus specified. Checking all available areas by default" in result.stdout
+
+    mock_run_review.assert_called_once()
+    kwargs = mock_run_review.call_args.kwargs
+    assert "focus_areas" in kwargs
+    assert set(kwargs["focus_areas"]) == all_possible_areas

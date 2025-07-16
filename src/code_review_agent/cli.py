@@ -65,10 +65,12 @@ def review(
     final_focus_areas: List[str]
     if focus_from_cli:
         valid_focus_areas = []
+        possible_areas_lower = {area.lower() for area in POSSIBLE_FOCUS_AREAS}
+
         for area in focus_from_cli:
-            formatted_area = area.title() 
-            if formatted_area in POSSIBLE_FOCUS_AREAS:
-                valid_focus_areas.append(formatted_area)
+            if area.lower() in possible_areas_lower:
+                original_cased_area = next(p for p in POSSIBLE_FOCUS_AREAS if p.lower() == area.lower())
+                valid_focus_areas.append(original_cased_area)
             else:
                 typer.secho(f"Warning: Invalid focus area '{area}' ignored.", fg=typer.colors.YELLOW)
         

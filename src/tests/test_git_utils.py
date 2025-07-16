@@ -37,10 +37,11 @@ def test_get_diff(test_repo):
     assert "+API_KEY = '456' # Updated" in diff 
 
 def test_find_files_by_names(test_repo):
+
     repo_path, _, _ = test_repo
     names_to_find = ["user_service", "config"]
 
-    found_files = git_utils.find_files_by_names(repo_path, names_to_find)
+    found_files = git_utils.find_files_by_names(repo_path, names_to_find, [], [])
 
     assert set(found_files) == {
         os.path.join('src', 'services', 'user_service.py').replace('\\', '/'),
@@ -49,13 +50,14 @@ def test_find_files_by_names(test_repo):
     assert len(found_files) == 2
 
 def test_find_files_by_names_no_matches(test_repo):
+
     repo_path, _, _ = test_repo
     names_to_find = ["non_existent_file", "database"]
 
-    found_files = git_utils.find_files_by_names(repo_path, names_to_find)
-
+    found_files = git_utils.find_files_by_names(repo_path, names_to_find, [], [])
 
     assert len(found_files) == 0
+
 
 def test_get_file_structure_from_paths():
     paths = [
