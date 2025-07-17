@@ -1,19 +1,25 @@
 FROM python:3.11-slim as builder
-WORKDIR /app
+
 RUN pip install poetry
+
+WORKDIR /app
+
 COPY pyproject.toml poetry.lock ./
 
-RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
-RUN pip install --prefix=/install -r requirements.txt
-
+RUN poetry install --no-dev --no-interaction --no-ansi
 
 FROM python:3.11-slim
+
 WORKDIR /app
 
-COPY --from=builder /install /usr/local
+COPY --from=builder /root/.cache/pypoetry/virtualenvs/ /root/.cache/pypoetry/virtualenvs/
+
+COPY --from=builder /app/pyproject.toml /app/
+
 COPY src/ /app/src/
 
-RUN pip install -e .
+RUN poetry config virtualenvs.in-project false --local \
+    && poetry config virtualenvs.path /root/.cache/pypoetry/virtualenvs
 
-ENTRYPOINT ["code-review-agent"]
+ENTRYPOINT ["poetry", "run", "code-review-agent"]
 CMD ["--help"]
