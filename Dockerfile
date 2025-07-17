@@ -7,7 +7,7 @@ RUN pip install "poetry==$POETRY_VERSION"
 
 WORKDIR /app
 
-COPY poetry.lock pyproject.toml ./
+COPY pyproject.toml poetry.lock ./
 
 RUN poetry install --no-root --without dev --no-interaction --no-ansi
 
@@ -19,6 +19,7 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY src/ /app/src/
+
 COPY pyproject.toml .
 
 RUN pip install -e .
