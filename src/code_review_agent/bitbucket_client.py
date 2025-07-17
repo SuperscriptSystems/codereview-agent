@@ -26,9 +26,9 @@ def _get_bitbucket_client() -> Bitbucket:
             password=password
         )
         
-        # pylint: disable=no-member
-        user_info = client.get_user_info()
-        print(f"✅ Successfully authenticated to Bitbucket API as user: {user_info.get('display_name')}")
+        client.get_users(limit=1)
+        
+        print(f"✅ Successfully authenticated to Bitbucket API as user: {username}")
         
         _client = client
         return _client
