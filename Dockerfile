@@ -1,28 +1,38 @@
 # Dockerfile
 
-FROM python:3.11-slim as builder
+FROM python:3.11-slim as requirements_stage
 
-ENV POETRY_VERSION=1.8.2
-RUN pip install "poetry==$POETRY_VERSION"
+# Встановлюємо Poetry
+RUN pip install poetry poetry-plugin-export
+
+WORKDIR /app
+COPY pyproject.toml poetry.lock ./
+
+RUN poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev
+
+FROM python:3.11-slim as builder
 
 WORKDIR /app
 
-COPY pyproject.toml poetry.lock ./
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-RUN poetry install --no-root --without dev --no-interaction --no-ansi
+COPY --from=requirements_stage /app/requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /opt/venv /opt/venv
 
 COPY src/ /app/src/
-
 COPY pyproject.toml .
 
-RUN pip install -e .
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN pip install --no-deps .
 
 ENTRYPOINT ["code-review-agent"]
 CMD ["--help"]
