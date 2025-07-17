@@ -110,12 +110,13 @@ def find_files_by_names(
     return found_files
 
 def get_file_structure_from_paths(paths: List[str]) -> str:
-    """Creates a file tree string representation from a list of file paths."""
     if not paths:
         return "No files in context."
 
     structure = []
     for path in sorted(list(set(paths))):
-        structure.append(f"- {path.replace('\\', '/')}")
+        normalized_path = path.replace('\\', '/')
+
+        structure.append(f"- {normalized_path}")
         
     return "\n".join(structure)
