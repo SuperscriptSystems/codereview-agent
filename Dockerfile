@@ -2,7 +2,6 @@
 
 FROM python:3.11-slim as requirements_stage
 
-# Встановлюємо Poetry
 RUN pip install poetry poetry-plugin-export
 
 WORKDIR /app
