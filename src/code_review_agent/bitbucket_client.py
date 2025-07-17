@@ -5,46 +5,36 @@ from .models import CodeIssue
 
 _client = None
 
-def _get_bitbucket_client():
-    """Initializes and returns the Bitbucket client."""
+def _get_bitbucket_client() -> Bitbucket:
+    """
+    Initializes and returns the Bitbucket client based on environment variables.
+    Caches the client for subsequent calls.
+    """
     global _client
     if _client:
         return _client
 
     username = os.environ.get("BITBUCKET_APP_USERNAME")
     password = os.environ.get("BITBUCKET_APP_PASSWORD")
-    
-    print("--- Bitbucket Client Auth Check ---")
-    if username:
-        print(f"BITBUCKET_APP_USERNAME: Found (length: {len(username)})")
-    else:
-        print("BITBUCKET_APP_USERNAME: NOT FOUND")
-
-    if password:
-        print(f"BITBUCKET_APP_PASSWORD: Found (length: {len(password)})")
-    else:
-        print("BITBUCKET_APP_PASSWORD: NOT FOUND")
-    print("-----------------------------------")
 
     if not username or not password:
         raise ValueError("BITBUCKET_APP_USERNAME or BITBUCKET_APP_PASSWORD not set.")
+        
+    client = Bitbucket(
+        url="https://bitbucket.org",
+        username=username,
+        password=password
+    )
     
     try:
-        client = Bitbucket(
-            url="https://api.bitbucket.org",
-            username=username,
-            password=password
-        )
-         # pylint: disable=no-member 
-        workspaces = client.workspaces.get_list()
-        
-        print(f"✅ Successfully authenticated to Bitbucket API. Found {len(workspaces)} workspace(s).")
-        _client = client
-        return _client
-        
+        user_info = client.get_users_info(user_filter=username)
+        print(f"✅ Successfully authenticated to Bitbucket API as user: {user_info}")
     except Exception as e:
-        print(f"❌ CRITICAL: Failed to initialize or authenticate Bitbucket client: {e}")
-        raise e
+        print(f"❌ CRITICAL: Failed to authenticate Bitbucket client: {e}")
+        raise
+        
+    _client = client
+    return _client
 
 def post_pr_comment(issue: CodeIssue, file_path: str):
     """Posts a single review comment to the Bitbucket Pull Request."""
