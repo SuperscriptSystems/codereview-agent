@@ -1,66 +1,45 @@
 import os
-from atlassian import Bitbucket
+import requests
+from requests.auth import HTTPBasicAuth
 from collections import Counter
 from .models import CodeIssue
 
-_client = None
+USERNAME = os.environ["BITBUCKET_USERNAME"]
+APP_PASSWORD = os.environ["BITBUCKET_APP_PASSWORD"]
+WORKSPACE = os.environ["BITBUCKET_WORKSPACE"]
+REPO_SLUG = os.environ["BITBUCKET_REPO_SLUG"]
+PR_ID = os.environ["BITBUCKET_PR_ID"]
 
-def _get_bitbucket_client() -> Bitbucket:
-    """
-    Initializes and returns the Bitbucket client using a Bearer API Token.
-    Caches the client for subsequent calls.
-    """
-    global _client
-    if _client:
-        return _client
+BASE_URL = f"https://api.bitbucket.org/2.0/repositories/{WORKSPACE}/{REPO_SLUG}/pullrequests/{PR_ID}"
+AUTH = HTTPBasicAuth(USERNAME, APP_PASSWORD)
+HEADERS = {
+    "Content-Type": "application/json"
+}
 
-    api_token = os.environ.get("BITBUCKET_API_TOKEN")
-
-    if not api_token:
-        raise ValueError("BITBUCKET_API_TOKEN environment variable is not set.")
-        
-    try:
-        client = Bitbucket(
-            url="https://bitbucket.org",
-            token=api_token
-        )
-        
-        # pylint: disable=no-member
-        client.get_users(limit=1)
-        
-        print(f"✅ Successfully authenticated to Bitbucket API as user: {client.get_users(limit=1)}")
-        
-        _client = client
-        return _client
-    except Exception as e:
-        print(f"❌ CRITICAL: Failed to authenticate with Bitbucket API Token. Please check the token and its permissions. Error: {e}")
-        raise
 
 def post_pr_comment(issue: CodeIssue, file_path: str):
     """Posts a single review comment to a specific line in a Bitbucket Pull Request."""
-    try:
-        client = _get_bitbucket_client()
-        workspace = os.environ["BITBUCKET_WORKSPACE"]
-        repo_slug = os.environ["BITBUCKET_REPO_SLUG"]
-        pr_id = int(os.environ["BITBUCKET_PR_ID"])
+    url = f"{BASE_URL}/comments"
 
-        comment_body = f"**[{issue.issue_type}]**\n\n{issue.comment}"
-        if issue.suggestion:
-            comment_body += f"\n\n**Suggestion:**\n```\n{issue.suggestion}\n```"
-        
-        # pylint: disable=no-member
-        client.pull_requests.comment(
-            workspace=workspace,
-            repository_slug=repo_slug,
-            pull_request_id=pr_id,
-            comment=comment_body,
-            file=file_path,
-            line_to=issue.line_number
-        )
-        
-        print(f"✅ Successfully posted a comment to Bitbucket PR #{pr_id} on file {file_path}.")
-    except Exception as e:
-        print(f"❌ Failed to post line comment to Bitbucket: {e}")
+    comment_body = f"**[{issue.issue_type}]**\n\n{issue.comment}"
+    if issue.suggestion:
+        comment_body += f"\n\n**Suggestion:**\n```\n{issue.suggestion}\n```"
+
+    payload = {
+        "content": {"raw": comment_body},
+        "inline": {
+            "path": file_path,
+            "to": issue.line_number
+        }
+    }
+
+    response = requests.post(url, headers=HEADERS, auth=AUTH, json=payload)
+
+    if response.status_code == 201:
+        print(f"✅ Successfully posted comment to PR on file {file_path}.")
+    else:
+        print(f"❌ Failed to post line comment: {response.status_code} — {response.text}")
+
 
 def post_summary_comment(all_issues: list[CodeIssue]):
     """Posts a single summary comment to the Bitbucket Pull Request."""
@@ -68,29 +47,25 @@ def post_summary_comment(all_issues: list[CodeIssue]):
         return
 
     print("📝 Generating and posting summary comment to Bitbucket...")
-    try:
-        client = _get_bitbucket_client()
-        workspace = os.environ["BITBUCKET_WORKSPACE"]
-        repo_slug = os.environ["BITBUCKET_REPO_SLUG"]
-        pr_id = int(os.environ["BITBUCKET_PR_ID"])
 
-        total_issues = len(all_issues)
-        issue_counts = Counter(issue.issue_type for issue in all_issues)
-        summary_body = f"### 🤖 AI Code Review Summary\n\nFound **{total_issues} potential issue(s)**.\n\n"
-        if issue_counts:
-            summary_body += "**Issue Breakdown:**\n"
-            for issue_type, count in issue_counts.items():
-                summary_body += f"* **{issue_type}:** {count} issue(s)\n"
-        summary_body += "\n---\n*Please see the detailed inline comments on the \"Diff\" tab for more context.*"
+    total_issues = len(all_issues)
+    issue_counts = Counter(issue.issue_type for issue in all_issues)
 
-        # pylint: disable=no-member
-        client.pull_requests.comment(
-            workspace=workspace,
-            repository_slug=repo_slug,
-            pull_request_id=pr_id,
-            comment=summary_body
-        )
-        
+    summary_body = f"### 🤖 AI Code Review Summary\n\nFound **{total_issues} potential issue(s)**.\n\n"
+    if issue_counts:
+        summary_body += "**Issue Breakdown:**\n"
+        for issue_type, count in issue_counts.items():
+            summary_body += f"* **{issue_type}:** {count} issue(s)\n"
+    summary_body += "\n---\n*Please see the detailed inline comments on the \"Diff\" tab for more context.*"
+
+    url = f"{BASE_URL}/comments"
+    payload = {
+        "content": {"raw": summary_body}
+    }
+
+    response = requests.post(url, headers=HEADERS, auth=AUTH, json=payload)
+
+    if response.status_code == 201:
         print("✅ Successfully posted the summary comment to Bitbucket.")
-    except Exception as e:
-        print(f"❌ An unexpected error occurred while posting the summary comment: {e}")
+    else:
+        print(f"❌ Failed to post summary comment: {response.status_code} — {response.text}")
