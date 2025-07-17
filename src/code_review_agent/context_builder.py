@@ -10,7 +10,7 @@ def determine_context(
     llm_config: dict,
 ) -> ContextRequirements:
     
-    client = get_client(llm_config.get("provider", "openai"))
+    client = get_client(llm_config)
     model = llm_config.get("model_context", "gpt-4o")
 
     system_prompt = """

@@ -3,10 +3,16 @@ llm:
   models:
     context_builder:
       name: 'gpt-4o'
-      context_window: 128000
     reviewer:
       name: 'gpt-4o'
-      context_window: 128000
+
+# llm:
+#   provider: 'openrouter'
+#   base_url: 'https://openrouter.ai/api/v1'
+
+#   models:
+#     context_builder: 'google/gemini-flash-1.5'
+#     reviewer: 'google/gemini-1.5-pro'
 
 max_context_iterations: 3
 max_context_files: 25
@@ -42,10 +48,13 @@ filtering:
     - '.next'
     - '.pytest_cache'
 
+# review_focus:
+#   - 'Security'
+#   - 'Performance'
+#   - 'LogicError'
+#   - 'CodeStyle'
+
 review_focus:
-  - 'Security'
-  - 'Performance'
-  - 'LogicError'
   - 'CodeStyle'
 
 review_rules:

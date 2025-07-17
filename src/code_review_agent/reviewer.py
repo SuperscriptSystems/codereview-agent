@@ -10,7 +10,7 @@ def run_review(
     focus_areas: List[IssueType]
 ) -> Dict[str, ReviewResult]:
     
-    client = get_client(llm_config.get("provider", "openai"))
+    client = get_client(llm_config)
     model = llm_config.get("model_review", "gpt-4o")
     
 
