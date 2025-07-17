@@ -1,3 +1,5 @@
+# Dockerfile
+
 FROM python:3.11-slim as builder
 
 RUN pip install poetry
@@ -20,6 +22,7 @@ COPY src/ /app/src/
 
 RUN poetry config virtualenvs.in-project false --local \
     && poetry config virtualenvs.path /root/.cache/pypoetry/virtualenvs
+
 
 ENTRYPOINT ["poetry", "run", "code-review-agent"]
 CMD ["--help"]
