@@ -13,9 +13,9 @@ def get_client(llm_config: Dict[str, any]):
     
     provider = llm_config.get("provider", "openai")
     
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("LLM_API_KEY")
     if not api_key:
-        raise ValueError("API key not found. Please set OPENAI_API_KEY in your .env file.")
+        raise ValueError("API key not found. Please set LLM_API_KEY in your .env file.")
 
     base_url = llm_config.get("base_url", None)
 

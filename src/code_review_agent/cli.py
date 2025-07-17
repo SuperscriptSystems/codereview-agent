@@ -6,7 +6,7 @@ from typing_extensions import Annotated
 from dotenv import load_dotenv
 
 from . import git_utils, context_builder, reviewer
-from .models import IssueType
+from .models import IssueType, CodeIssue
 
 
 
@@ -49,8 +49,8 @@ def review(
     Performs an AI-powered, context-aware code review using an iterative context-building approach.
     """
     load_dotenv()
-    if not os.getenv("OPENAI_API_KEY"):
-        typer.secho("Error: OPENAI_API_KEY is not set.", fg=typer.colors.RED, err=True)
+    if not os.getenv("LLM_API_KEY"):
+        typer.secho("Error: LLM_API_KEY is not set.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
     config = load_config(repo_path)
@@ -168,22 +168,39 @@ def review(
     )
 
     typer.secho("\n\n--- 🏁 Review Complete ---", bold=True, fg=typer.colors.BRIGHT_MAGENTA)
-    total_issues = 0
+
+    all_issues: List[CodeIssue] = []
+    files_with_issues = {}
     for file_path, result in review_results.items():
         if not result.is_ok():
-            total_issues += len(result.issues)
+            all_issues.extend(result.issues)
+            files_with_issues[file_path] = result.issues
+
+    is_bitbucket_pr = "BITBUCKET_PR_ID" in os.environ
+
+    if is_bitbucket_pr and all_issues:
+        typer.echo("🚀 Publishing results to Bitbucket PR...")
+        from . import bitbucket_client 
+        for file_path, issues in files_with_issues.items():
+            for issue in issues:
+                bitbucket_client.post_pr_comment(issue, file_path)
+        bitbucket_client.post_summary_comment(all_issues)
+    
+    elif not is_bitbucket_pr and all_issues:
+        for file_path, issues in files_with_issues.items():
             typer.secho(f"\n🚨 Issues in `{file_path}`:", fg=typer.colors.YELLOW, bold=True)
-            for issue in result.issues:
+            for issue in issues:
                 typer.secho(f"  - L{issue.line_number} [{issue.issue_type}]: ", fg=typer.colors.RED, nl=False)
                 typer.echo(issue.comment)
                 if issue.suggestion:
                     typer.secho(f"    💡 Suggestion:", fg=typer.colors.CYAN)
                     typer.echo(f"    ```\n    {issue.suggestion}\n    ```")
 
-    if total_issues == 0:
+
+    if not all_issues:
         typer.secho("\n🎉 Great job! No issues found.", fg=typer.colors.GREEN, bold=True)
     else:
-        typer.secho(f"\nFound a total of {total_issues} issue(s).", fg=typer.colors.YELLOW)
+        typer.secho(f"\nFound a total of {len(all_issues)} issue(s).", fg=typer.colors.YELLOW)
 
 def main():
     app()
