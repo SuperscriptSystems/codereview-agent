@@ -78,6 +78,13 @@ def post_summary_comment(all_issues: list[CodeIssue]):
         issue_counts = Counter(issue.issue_type for issue in all_issues)
         summary_body = f"### 🤖 AI Code Review Summary\n\nFound **{total_issues} potential issue(s)**."
 
+        if issue_counts:
+            summary_body += "**Issue Breakdown:**\n"
+            for issue_type, count in issue_counts.items():
+                summary_body += f"* **{issue_type}:** {count} issue(s)\n"
+        
+        summary_body += "\n---\n*Please see the detailed inline comments on the \"Diff\" tab for more context.*"
+
         url = f'2.0/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}/comments'
         payload = {"content": {"raw": summary_body}}
         
