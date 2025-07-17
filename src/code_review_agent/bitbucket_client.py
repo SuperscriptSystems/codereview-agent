@@ -3,19 +3,48 @@ from atlassian import Bitbucket
 from collections import Counter
 from .models import CodeIssue
 
+_client = None
+
 def _get_bitbucket_client():
     """Initializes and returns the Bitbucket client."""
+    global _client
+    if _client:
+        return _client
+
     username = os.environ.get("BITBUCKET_APP_USERNAME")
     password = os.environ.get("BITBUCKET_APP_PASSWORD")
     
+    print("--- Bitbucket Client Auth Check ---")
+    if username:
+        print(f"BITBUCKET_APP_USERNAME: Found (length: {len(username)})")
+    else:
+        print("BITBUCKET_APP_USERNAME: NOT FOUND")
+
+    if password:
+        print(f"BITBUCKET_APP_PASSWORD: Found (length: {len(password)})")
+    else:
+        print("BITBUCKET_APP_PASSWORD: NOT FOUND")
+    print("-----------------------------------")
+
     if not username or not password:
         raise ValueError("BITBUCKET_APP_USERNAME or BITBUCKET_APP_PASSWORD not set.")
+    
+    try:
+        client = Bitbucket(
+            url="https://api.bitbucket.org",
+            username=username,
+            password=password
+        )
+         # pylint: disable=no-member 
+        workspaces = client.workspaces.get_list()
         
-    return Bitbucket(
-        url="https://api.bitbucket.org",
-        username=username,
-        password=password
-    )
+        print(f"✅ Successfully authenticated to Bitbucket API. Found {len(workspaces)} workspace(s).")
+        _client = client
+        return _client
+        
+    except Exception as e:
+        print(f"❌ CRITICAL: Failed to initialize or authenticate Bitbucket client: {e}")
+        raise e
 
 def post_pr_comment(issue: CodeIssue, file_path: str):
     """Posts a single review comment to the Bitbucket Pull Request."""
