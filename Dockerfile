@@ -1,33 +1,28 @@
 # Dockerfile
 
-# --- Етап 1: Встановлення залежностей ---
 FROM python:3.11-slim as builder
 
-# Встановлюємо Poetry
-ENV POETRY_HOME="/opt/poetry"
-RUN python3 -m venv $POETRY_HOME
-ENV PATH="$POETRY_HOME/bin:$PATH"
-RUN pip install --upgrade pip && pip install poetry
+ENV POETRY_VERSION=1.8.2 # Фіксуємо версію для стабільності
+RUN pip install "poetry==$POETRY_VERSION"
 
 WORKDIR /app
 
-COPY poetry.lock pyproject.toml ./
+COPY pyproject.toml poetry.lock ./
 
-RUN poetry install --no-root --without dev
+RUN poetry install --no-root --without dev --no-interaction --no-ansi
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY src/ /app/src/
+
 COPY pyproject.toml .
 
-ENV PATH="/app/.venv/bin:$PATH"
-
-RUN pip install .
+RUN pip install -e .
 
 ENTRYPOINT ["code-review-agent"]
 CMD ["--help"]
