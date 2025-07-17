@@ -1,14 +1,13 @@
 # Dockerfile
 
+
 FROM python:3.11-slim as builder
 
 RUN pip install poetry
-
 WORKDIR /app
-
 COPY pyproject.toml poetry.lock ./
 
-RUN poetry install --no-dev --no-interaction --no-ansi
+RUN poetry install --without dev --no-interaction --no-ansi
 
 FROM python:3.11-slim
 
@@ -22,7 +21,6 @@ COPY src/ /app/src/
 
 RUN poetry config virtualenvs.in-project false --local \
     && poetry config virtualenvs.path /root/.cache/pypoetry/virtualenvs
-
 
 ENTRYPOINT ["poetry", "run", "code-review-agent"]
 CMD ["--help"]
