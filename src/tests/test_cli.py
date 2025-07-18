@@ -36,7 +36,7 @@ def test_review_uses_cli_focus_with_highest_priority(mocker, create_test_config)
     repo_path = create_test_config({'review_focus': ['Security']})
     mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
 
-    result = runner.invoke(app, ["--repo-path", repo_path, "--focus", "CodeStyle", "--focus", "Performance"])
+    result = runner.invoke(app, ["--repo-path", repo_path, "--focus", "LogicError"])
 
     assert result.exit_code == 0, result.stdout
     assert "Using focus areas from command line arguments" in result.stdout
@@ -44,7 +44,7 @@ def test_review_uses_cli_focus_with_highest_priority(mocker, create_test_config)
     mock_run_review.assert_called_once()
     kwargs = mock_run_review.call_args.kwargs
     assert "focus_areas" in kwargs
-    assert set(kwargs["focus_areas"]) == {"CodeStyle", "Performance"}
+    assert set(kwargs["focus_areas"]) == {"LogicError"}
 
 def test_review_uses_config_file_focus(mocker, create_test_config):
     repo_path = create_test_config({'review_focus': ['Security', 'LogicError']})

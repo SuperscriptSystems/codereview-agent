@@ -40,7 +40,7 @@ def test_run_review_with_issues_found(mocker):
 
     mock_issue = CodeIssue(
         line_number=10,
-        issue_type="CodeStyle",
+        issue_type="LogicError",
         comment="Variable 'x' is not descriptive.",
         suggestion="use a more descriptive name"
     )
@@ -55,7 +55,7 @@ def test_run_review_with_issues_found(mocker):
         full_context_content={"main.py": "x = 5"},
         review_rules=[],
         llm_config={"provider": "openai"},
-        focus_areas=["CodeStyle"]
+        focus_areas=["LogicError"]
     )
 
 
