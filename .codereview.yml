@@ -48,13 +48,10 @@ filtering:
     - '.next'
     - '.pytest_cache'
 
-# review_focus:
-#   - 'Security'
-#   - 'Performance'
-#   - 'LogicError'
-#   - 'CodeStyle'
-
 review_focus:
+  - 'Security'
+  - 'Performance'
+  - 'LogicError'
   - 'CodeStyle'
 
 review_rules:

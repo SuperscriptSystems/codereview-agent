@@ -12,7 +12,7 @@ class ContextRequirements(BaseModel):
         ..., description="A brief explanation of why the additional files are needed or why the context is sufficient."
     )
 
-IssueType = Literal["LogicError", "CodeStyle", "Security", "Suggestion", "TestCoverage", "Clarity", "Performance", "Other"]
+IssueType = Literal["LogicError"]
 
 class CodeIssue(BaseModel):
     line_number: int = Field(..., description="The relevant line number in the file for the issue.")
