@@ -21,6 +21,7 @@ pydantic = "^2.7.1"
 python-dotenv = "^1.0.1"
 tiktoken = "^0.9.0"
 atlassian-python-api = "^4.0.4"
+pygithub = "^2.6.1"
 
 
 [tool.poetry.group.dev.dependencies]

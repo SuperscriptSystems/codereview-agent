@@ -5,6 +5,7 @@ from typing import List, Optional
 from typing_extensions import Annotated
 from dotenv import load_dotenv
 
+from . import bitbucket_client, github_client
 from . import git_utils, context_builder, reviewer
 from .models import IssueType, CodeIssue
 
@@ -81,8 +82,8 @@ def review(
         final_focus_areas = config['review_focus']
         typer.echo("🎯 Using focus areas from .codereview.yml config file.")
     else:
-        final_focus_areas = POSSIBLE_FOCUS_AREAS
-        typer.echo("🎯 No focus specified. Checking all available areas by default.")
+        final_focus_areas = ["LogicError"]
+        typer.echo("🎯 No focus specified. Checking for 'LogicError' by default.")
 
 
     typer.secho("🔍 Gathering initial data...", fg=typer.colors.BLUE)
@@ -176,25 +177,31 @@ def review(
             all_issues.extend(result.issues)
             files_with_issues[file_path] = result.issues
 
+    is_github_pr = "GITHUB_ACTIONS" in os.environ and "GITHUB_PR_NUMBER" in os.environ
     is_bitbucket_pr = "BITBUCKET_PR_ID" in os.environ
-
-    if is_bitbucket_pr and all_issues:
-        typer.echo("🚀 Publishing results to Bitbucket PR...")
-        from . import bitbucket_client 
-        for file_path, issues in files_with_issues.items():
-            for issue in issues:
-                bitbucket_client.post_pr_comment(issue, file_path)
-        bitbucket_client.post_summary_comment(all_issues)
-    
-    elif not is_bitbucket_pr and all_issues:
-        for file_path, issues in files_with_issues.items():
-            typer.secho(f"\n🚨 Issues in `{file_path}`:", fg=typer.colors.YELLOW, bold=True)
-            for issue in issues:
-                typer.secho(f"  - L{issue.line_number} [{issue.issue_type}]: ", fg=typer.colors.RED, nl=False)
-                typer.echo(issue.comment)
-                if issue.suggestion:
-                    typer.secho(f"    💡 Suggestion:", fg=typer.colors.CYAN)
-                    typer.echo(f"    ```\n    {issue.suggestion}\n    ```")
+    if all_issues:
+        if is_github_pr:
+            typer.echo("🚀 Publishing results to GitHub PR...")
+            for file_path, issues in files_with_issues.items():
+                for issue in issues:
+                    github_client.post_pr_comment(issue, file_path)
+        
+        elif is_bitbucket_pr:
+            typer.echo("🚀 Publishing results to Bitbucket PR...")
+            for file_path, issues in files_with_issues.items():
+                for issue in issues:
+                    bitbucket_client.post_pr_comment(issue, file_path)
+            bitbucket_client.post_summary_comment(all_issues)
+            
+        else:
+            for file_path, issues in files_with_issues.items():
+                typer.secho(f"\n🚨 Issues in `{file_path}`:", fg=typer.colors.YELLOW, bold=True)
+                for issue in issues:
+                    typer.secho(f"  - L{issue.line_number} [{issue.issue_type}]: ", fg=typer.colors.RED, nl=False)
+                    typer.echo(issue.comment)
+                    if issue.suggestion:
+                        typer.secho(f"    💡 Suggestion:", fg=typer.colors.CYAN)
+                        typer.echo(f"    ```\n    {issue.suggestion}\n    ```")
 
 
     if not all_issues:

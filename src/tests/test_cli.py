@@ -60,18 +60,19 @@ def test_review_uses_config_file_focus(mocker, create_test_config):
     assert "focus_areas" in kwargs
     assert set(kwargs["focus_areas"]) == {"Security", "LogicError"}
 
-def test_review_uses_default_full_focus(mocker, tmp_path):
+def test_review_uses_default_logicerror_focus(mocker, tmp_path):
+    """
+    Tests that if no focus is specified, the agent defaults to 'LogicError' only.
+    """
     mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
-    
-    from code_review_agent.models import IssueType
-    all_possible_areas = set(IssueType.__args__)
 
     result = runner.invoke(app, ["--repo-path", str(tmp_path)])
     
     assert result.exit_code == 0, result.stdout
-    assert "No focus specified. Checking all available areas by default" in result.stdout
+    assert "🎯 No focus specified. Checking for 'LogicError' by default." in result.stdout
 
     mock_run_review.assert_called_once()
     kwargs = mock_run_review.call_args.kwargs
+    
     assert "focus_areas" in kwargs
-    assert set(kwargs["focus_areas"]) == all_possible_areas
+    assert set(kwargs["focus_areas"]) == {"LogicError"}
