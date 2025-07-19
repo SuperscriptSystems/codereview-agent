@@ -1,5 +1,7 @@
+import json
 from typing import Dict, List
-from .models import ReviewResult,IssueType
+from pydantic import ValidationError
+from .models import ReviewResult, IssueType
 from .llm_client import get_client
 
 def run_review(
@@ -11,8 +13,7 @@ def run_review(
 ) -> Dict[str, ReviewResult]:
     
     client = get_client(llm_config)
-    model = llm_config.get("model_review", "gpt-4o")
-    
+    model = llm_config.get('models', {}).get('reviewer', 'google/gemini-pro-1.5')
 
     focus_prompt_part = "Your primary focus for this review should be on the following areas: "
     focus_prompt_part += ", ".join(focus_areas) + "."
@@ -31,9 +32,13 @@ def run_review(
     **Key Instructions:**
     1.  Focus your review ONLY on the files that were explicitly changed in the commit.
     2.  Use the full context of all provided files to understand dependencies and side effects.
-    3.  If you find no issues in a file, you MUST return an empty list of issues. This is a critical instruction to reduce hallucinations.
-    4.  If a fix is simple and obvious, provide a direct code suggestion in the `suggestion` field.
+    3.  If you find no issues, you MUST return an empty list of issues.
+    4.  If a fix is simple, provide a direct code suggestion in the `suggestion` field.
     5.  Adhere to the following custom project rules: {' '.join(review_rules)}
+
+    **CRITICAL OUTPUT FORMATTING RULE:**
+    Your entire response MUST be a single, valid JSON array of objects. Each object must have keys: "line_number", "issue_type", "comment", and optional "suggestion".
+    Do not add any other text, explanations, or markdown formatting. Your response must start with `[` and end with `]`.
     """
 
     review_results = {}
@@ -42,26 +47,44 @@ def run_review(
     for file_path in changed_files_to_review:
         print(f"🤖 Reviewing file: {file_path}")
         user_prompt = f"""
-        Please review the file `{file_path}`.
+        Please review the file `{file_path}` based on the full context.
+        Return your findings as a raw JSON array string.
 
         **Full Context of all Relevant Files:**
         ```
         {context_str}
         ```
-
-        Focus your review on `{file_path}` and provide feedback based on the full context.
         """
         try:
             response = client.chat.completions.create(
                 model=model,
-                response_model=ReviewResult,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 max_retries=1,
             )
-            review_results[file_path] = response
+            raw_response_text = response.choices[0].message.content.strip()
+
+            try:
+                if raw_response_text.startswith("```json"):
+                    json_str = raw_response_text.split("```json\n", 1)[1].rsplit("\n```", 1)
+                elif raw_response_text.startswith("```"):
+                    json_str = raw_response_text.strip("` \n")
+                else:
+                    json_str = raw_response_text
+                
+                if not json_str:
+                    parsed_json = []
+                else:
+                    parsed_json = json.loads(json_str)
+                
+                validated_result = ReviewResult(issues=parsed_json)
+                review_results[file_path] = validated_result
+            except (json.JSONDecodeError, ValidationError) as e:
+                print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
+                review_results[file_path] = ReviewResult(issues=[])
+
         except Exception as e:
             print(f"\n⚠️ Error reviewing file {file_path}: {e}")
             review_results[file_path] = ReviewResult(issues=[])

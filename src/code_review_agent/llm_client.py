@@ -6,18 +6,21 @@ from typing import Dict
 
 def get_client(llm_config: Dict[str, any]):
     """
-    Creates and returns a patched LLM client based on the provided configuration.
-    It can connect to OpenAI or any OpenAI-compatible API like OpenRouter.
+    Creates and returns a patched LLM client.
+    Defaults to OpenRouter if no provider is specified.
     """
     load_dotenv(override=True)
-    
-    provider = llm_config.get("provider", "openai")
+
+    provider = llm_config.get("provider", "openrouter")
     
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
         raise ValueError("API key not found. Please set LLM_API_KEY in your .env file.")
 
-    base_url = llm_config.get("base_url", None)
+    base_url = llm_config.get("base_url")
+
+    if provider == "openrouter" and not base_url:
+        base_url = "https://openrouter.ai/api/v1"
 
     client_kwargs = {
         'base_url': base_url,
@@ -32,6 +35,7 @@ def get_client(llm_config: Dict[str, any]):
 
     try:
         client = OpenAI(**client_kwargs)
+
         return instructor.patch(client)
 
     except Exception as e:

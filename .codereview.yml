@@ -1,5 +1,6 @@
 # llm:
 #   provider: 'openai'
+#   base_url: 'https://api.openai.com/v1'
 #   models:
 #     context_builder:
 #       name: 'gpt-4o'
