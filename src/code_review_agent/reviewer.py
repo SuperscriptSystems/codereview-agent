@@ -57,36 +57,35 @@ def run_review(
         """
         try:
             response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_retries=1,
-            )
-            raw_response_text = response.choices[0].message.content.strip()
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_retries=1,
+                )
+            raw_response_text = response.choices.message.content.strip()
 
             try:
-                if raw_response_text.startswith("```json"):
-                    json_str = raw_response_text.split("```json\n", 1)[1].rsplit("\n```", 1)
-                elif raw_response_text.startswith("```"):
-                    json_str = raw_response_text.strip("` \n")
-                else:
                     json_str = raw_response_text
-                
-                if not json_str:
-                    parsed_json = []
-                else:
-                    parsed_json = json.loads(json_str)
-                
-                validated_result = ReviewResult(issues=parsed_json)
-                review_results[file_path] = validated_result
-            except (json.JSONDecodeError, ValidationError) as e:
-                print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
-                review_results[file_path] = ReviewResult(issues=[])
+                    if json_str.startswith("```json"):
+                        json_str = json_str.split("```json\n", 1).rsplit("\n```", 1)[0]
+                    elif json_str.startswith("```"):
+                        json_str = json_str.strip("` \n")
+                    
+                    if not json_str:
+                        parsed_json = []
+                    else:
+                        parsed_json = json.loads(json_str)
+                    
+                    validated_result = ReviewResult(issues=parsed_json)
+                    review_results[file_path] = validated_result
+            except (json.JSONDecodeError, ValidationError, IndexError) as e:
+                    print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
+                    review_results[file_path] = ReviewResult(issues=[])
 
         except Exception as e:
-            print(f"\n⚠️ Error reviewing file {file_path}: {e}")
-            review_results[file_path] = ReviewResult(issues=[])
+                print(f"\n⚠️ Critical error during LLM call for {file_path}: {e}")
+                review_results[file_path] = ReviewResult(issues=[])
 
     return review_results
