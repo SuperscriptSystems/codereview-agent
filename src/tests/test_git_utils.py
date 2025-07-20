@@ -93,3 +93,17 @@ def test_get_file_structure(test_repo):
     assert "        user_service.py" in structure
     assert "    main.py" in structure
     assert "app_config.py" not in structure
+
+
+def test_get_file_content_handles_file_not_found(test_repo):
+    """
+    Tests that get_file_content returns a specific message for a non-existent file.
+    """
+    
+    repo_path, _, _ = test_repo
+    non_existent_file = "path/to/a/file/that/does/not/exist.txt"
+
+    content = git_utils.get_file_content(repo_path, non_existent_file)
+
+    assert "File not found" in content
+    assert non_existent_file in content    

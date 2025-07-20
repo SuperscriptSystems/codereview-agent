@@ -1,5 +1,6 @@
 import yaml
 import pytest
+import git
 from typer.testing import CliRunner
 from code_review_agent.cli import app
 from code_review_agent.models import ContextRequirements, ReviewResult
@@ -76,3 +77,20 @@ def test_review_uses_default_logicerror_focus(mocker, tmp_path):
     
     assert "focus_areas" in kwargs
     assert set(kwargs["focus_areas"]) == {"LogicError"}
+
+
+def test_review_command_handles_git_error(mocker, tmp_path, mock_dependencies):
+    """
+    Tests that the CLI handles Git errors gracefully.
+    `mock_dependencies` тут потрібна, щоб "замокати" інші виклики,
+    але ми перевизначаємо мок для get_diff.
+    """
+    mocker.patch(
+        'code_review_agent.git_utils.get_diff', 
+        side_effect=git.exc.GitCommandError('git diff', 'fatal: bad revision')
+    )
+
+    result = runner.invoke(app, ["--repo-path", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert "fatal: bad revision" in str(result.exception)
