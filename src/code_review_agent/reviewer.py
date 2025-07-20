@@ -32,12 +32,12 @@ def run_review(
     **Key Instructions:**
     1.  Focus your review ONLY on the files that were explicitly changed in the commit.
     2.  Use the full context of all provided files to understand dependencies and side effects.
-    3.  If you find no issues, you MUST return an empty list of issues.
-    4.  If a fix is simple, provide a direct code suggestion in the `suggestion` field.
+    3.  If you find no issues in a file, you MUST return an empty list of issues.
+    4.  If a fix is simple and obvious, provide a direct code suggestion in the `suggestion` field.
     5.  Adhere to the following custom project rules: {' '.join(review_rules)}
 
     **CRITICAL OUTPUT FORMATTING RULE:**
-    Your entire response MUST be a single, valid JSON array of objects. Each object must have keys: "line_number", "issue_type", "comment", and optional "suggestion".
+    Your entire response MUST be a single, valid JSON array of objects. Each object must have keys: "line_number", "issue_type", "comment", and an optional "suggestion".
     Do not add any other text, explanations, or markdown formatting. Your response must start with `[` and end with `]`.
     """
 
@@ -57,35 +57,34 @@ def run_review(
         """
         try:
             response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_retries=1,
-                )
-            raw_response_text = response.choices.message.content.strip()
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+            )
+            raw_response_text = response.choices[0].message.content.strip()
 
             try:
-                    json_str = raw_response_text
-                    if json_str.startswith("```json"):
-                        json_str = json_str.split("```json\n", 1).rsplit("\n```", 1)[0]
-                    elif json_str.startswith("```"):
-                        json_str = json_str.strip("` \n")
-                    
-                    if not json_str:
-                        parsed_json = []
-                    else:
-                        parsed_json = json.loads(json_str)
-                    
-                    validated_result = ReviewResult(issues=parsed_json)
-                    review_results[file_path] = validated_result
+                json_str = raw_response_text
+                if json_str.startswith("```json"):
+                    json_str = json_str.split("```json\n", 1)[1].rsplit("\n```", 1)
+                elif json_str.startswith("```"):
+                    json_str = json_str.strip("` \n")
+                
+                if not json_str:
+                    parsed_json = []
+                else:
+                    parsed_json = json.loads(json_str)
+                
+                validated_result = ReviewResult(issues=parsed_json)
+                review_results[file_path] = validated_result
             except (json.JSONDecodeError, ValidationError, IndexError) as e:
-                    print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
-                    review_results[file_path] = ReviewResult(issues=[])
+                print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
+                review_results[file_path] = ReviewResult(issues=[])
 
         except Exception as e:
-                print(f"\n⚠️ Critical error during LLM call for {file_path}: {e}")
-                review_results[file_path] = ReviewResult(issues=[])
+            print(f"\n⚠️ Critical error during LLM call for {file_path}: {e}")
+            review_results[file_path] = ReviewResult(issues=[])
 
     return review_results
