@@ -1,4 +1,4 @@
-import demjson3
+import json
 from typing import Dict, List
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
@@ -66,20 +66,19 @@ def run_review(
             raw_response_text = response.choices[0].message.content.strip()
 
             try:
-                json_str = raw_response_text
-                if json_str.startswith("```json"):
-                    json_str = json_str.split("```json\n", 1)[1].rsplit("\n```", 1)
-                elif json_str.startswith("```"):
-                    json_str = json_str.strip("` \n")
-                
-                if not json_str:
-                    parsed_json = []
+                start_index = raw_response_text.find('[')
+                end_index = raw_response_text.rfind(']')
+
+                if start_index != -1 and end_index != -1 and end_index > start_index:
+                    json_str_cleaned = raw_response_text[start_index : end_index + 1]
+                    
+                    parsed_json = json.loads(json_str_cleaned, strict=False)
+                    
+                    validated_result = ReviewResult(issues=parsed_json)
+                    review_results[file_path] = validated_result
                 else:
-                    parsed_json = demjson3.decode(json_str)
-                
-                validated_result = ReviewResult(issues=parsed_json)
-                review_results[file_path] = validated_result
-            except (demjson3.JSONDecodeError, ValidationError, IndexError) as e:
+                    raise json.JSONDecodeError("Could not find JSON array brackets `[]` in the response.", raw_response_text, 0)
+            except (json.JSONDecodeError, ValidationError, IndexError) as e:
                 print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
                 review_results[file_path] = ReviewResult(issues=[])
 
