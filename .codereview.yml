@@ -1,12 +1,4 @@
-# llm:
-#   provider: 'openai'
-#   base_url: 'https://api.openai.com/v1'
-#   models:
-#     context_builder:
-#       name: 'gpt-4o'
-#     reviewer:
-#       name: 'gpt-4o'
-
+# LLM provider and models to use
 llm:
   provider: 'openrouter'
   base_url: 'https://openrouter.ai/api/v1'
@@ -15,9 +7,11 @@ llm:
     context_builder: 'google/gemini-flash-1.5'
     reviewer: 'google/gemini-1.5-pro'
 
+# --- Context building settings ---
 max_context_iterations: 3
 max_context_files: 25
 
+# --- File filtering settings ---
 filtering:
   ignored_extensions:
     - '.dll'
@@ -49,12 +43,16 @@ filtering:
     - '.next'
     - '.pytest_cache'
 
+# --- Reviewer settings ---
+# Default focus areas if not specified in CLI.
+# If omitted, defaults to "LogicError" only.
 review_focus:
   - 'Security'
   - 'Performance'
   - 'LogicError'
   - 'CodeStyle'
 
+# Custom rules for the reviewer agent.
 review_rules:
   - 'Pay close attention to potential race conditions in async code.'
   - 'All public functions must have a docstring.'

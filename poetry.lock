@@ -660,6 +660,17 @@ test = ["certifi (>=2024)", "cryptography-vectors (==45.0.5)", "pretend (>=0.7)"
 test-randomorder = ["pytest-randomly"]
 
 [[package]]
+name = "demjson3"
+version = "3.0.6"
+description = "encoder, decoder, and lint/validator for JSON (JavaScript Object Notation) compliant with RFC 7159"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "demjson3-3.0.6.tar.gz", hash = "sha256:37c83b0c6eb08d25defc88df0a2a4875d58a7809a9650bd6eee7afd8053cdbac"},
+]
+
+[[package]]
 name = "deprecated"
 version = "1.2.18"
 description = "Python @deprecated decorator to deprecate old python classes, functions or methods."
@@ -3647,4 +3658,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "9f32c99aca74cebcd95898f90a24c9bbe14b5d9d1ddfb1c3df1adeacd014fa50"
+content-hash = "3777ed14f3bdffa87cb04ac5ff410d0c0e572fbe9c035d464dae68735c6f78ef"

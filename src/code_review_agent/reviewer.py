@@ -1,4 +1,4 @@
-import json
+import demjson3
 from typing import Dict, List
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
@@ -75,11 +75,11 @@ def run_review(
                 if not json_str:
                     parsed_json = []
                 else:
-                    parsed_json = json.loads(json_str)
+                    parsed_json = demjson3.decode(json_str)
                 
                 validated_result = ReviewResult(issues=parsed_json)
                 review_results[file_path] = validated_result
-            except (json.JSONDecodeError, ValidationError, IndexError) as e:
+            except (demjson3.JSONDecodeError, ValidationError, IndexError) as e:
                 print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
                 review_results[file_path] = ReviewResult(issues=[])
 
