@@ -80,33 +80,28 @@ def run_review(
         custom_rules_instruction = f"**Adhere to the following custom project rules:**\n- {rules_text}"
 
     system_prompt = f"""
-    You are a meticulous and constructive senior software developer performing a code review.
-    Your task is to analyze a file holistically and then focus your comments ONLY on the specific lines that were changed in a git diff.
+    You are an expert AI code review assistant. Your sole function is to analyze code changes and output a clean, valid JSON array of issues.
 
-    **CRITICAL FOCUS RULE:**
-    **{focus_prompt_part}**
-    **You are strictly forbidden from reporting any issue types that are not in this list. If you find issues of other types, you MUST ignore them completely and return an empty list. DO NOT use the 'Other' category as a fallback.**
+    **--- YOUR TASK ---**
+    Analyze the provided `git diff` within the context of the full files. Your goal is to identify issues ONLY in the changed lines of code.
 
-    **Your Review Workflow:**
-    1.  **Understand the File Context:** First, read the **full content of the file** being reviewed to understand its purpose, structure, and overall logic.
-    2.  **Analyze the Changes:** Next, look at the **full git diff** to see exactly which lines in the file were added or modified.
-    3.  **Formulate Comments:** Based on your holistic understanding from step 1, provide feedback **ONLY on the changed lines** from step 2. Your comments must be relevant to the changes.
+    **--- YOUR WORKFLOW ---**
+    1.  **Holistic Understanding:** First, review the full content of all provided files to understand the complete context.
+    2.  **Focus on Changes:** Second, analyze the `git diff` to identify the specific lines that were added or modified.
+    3.  **Formulate Comments:** Finally, formulate your feedback. Your comments MUST apply ONLY to the changed lines identified in the diff.
 
-    **Focus your review STRICTLY on these categories:** {', '.join(focus_areas)}.
-    
-    {custom_rules_instruction}
+    **--- CRITICAL RULES ---**
+    1.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
+    2.  **SCOPE:** DO NOT comment on existing, unchanged code, even if you find flaws. Your analysis is strictly limited to the changed lines.
+    3.  {custom_rules_instruction}
 
-    **CRITICAL OUTPUT RULES:**
-    1.  Your entire response MUST be a Python list of dictionaries.
-    2.  The response MUST start with `[` and end with `]`.
-    3.  Each dictionary MUST have these keys: "line_number" (int), "issue_type" (str), "comment" (str), and an optional "suggestion" (str).
-    4.  If you find NO issues, you MUST return an empty list: `[]`.
-    5.  DO NOT output any text, explanations, or markdown like ```python. ONLY the raw list.
-    
-    **CRITICAL OUTPUT FORMATTING RULE:**
-    Your entire response MUST be a single, valid JSON array of objects. Do not add any other text, explanations, or markdown formatting. Your response must start with `[` and end with `]`.
-
-    **Before outputting the JSON, internally validate it to ensure it is perfectly formed. Pay special attention to escaping special characters like quotes (") and backslashes (\) within string values.
+    **--- OUTPUT FORMAT ---**
+    - Your entire response MUST be a single, raw, valid JSON array string.
+    - The response MUST start with `[` and end with `]`.
+    - Each object in the array MUST have these keys: "line_number" (int), "issue_type" (str, one of the focused types), "comment" (str), and an optional "suggestion" (str).
+    - If you find no issues that match your focus, you MUST return an empty JSON array: `[]`.
+    - Do not add any text, explanations, apologies, or markdown formatting like ```json.
+    - Before outputting, internally validate your response to ensure it is perfectly formed JSON. Pay special attention to escaping quotes (") and backslashes (\).
     """
 
     review_results = {}
