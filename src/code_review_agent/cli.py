@@ -1,7 +1,7 @@
 import os
 import yaml
 import typer
-from typing import List, Optional
+from typing import List, Optional, Dict
 from typing_extensions import Annotated
 from dotenv import load_dotenv
 
@@ -88,21 +88,24 @@ def review(
 
     typer.secho("🔍 Gathering initial data...", fg=typer.colors.BLUE)
 
+    commit_messages: str
+    changed_files_content: Dict[str, str]
+    diff_text: str
+    
     if staged:
-        typer.secho("Mode: Reviewing STAGED files.", bold=True)
         staged_data = git_utils.get_staged_diff_content(repo_path)
+        diff_text = "\n".join([v.get('diff', '') for v in staged_data.values()])
 
-        diff = "\n".join([v['diff'] for v in staged_data.values()])
-        changed_files_content = {path: data['content'] for path, data in staged_data.items()}
+        changed_files_content = {path: data.get('content', '') for path, data in staged_data.items()}
         commit_messages = "Reviewing staged files before commit."
     else:
         typer.secho(f"Mode: Reviewing commit range {base_ref}..{head_ref}", bold=True)
-        diff = git_utils.get_diff(repo_path, base_ref, head_ref)
+        diff_text = git_utils.get_diff(repo_path, base_ref, head_ref)
         commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
-        changed_file_paths = git_utils.get_changed_files_from_diff(diff)
+        changed_file_paths = git_utils.get_changed_files_from_diff(diff_text)
         changed_files_content = {
-            path: git_utils.get_file_content(repo_path, path) for path in changed_file_paths
-        }
+        path: git_utils.get_file_content(repo_path, path) for path in changed_file_paths
+    }
 
     if not changed_files_content:
         typer.secho("✅ No changed files detected to review.", fg=typer.colors.GREEN)
@@ -117,7 +120,7 @@ def review(
         context_file_structure = git_utils.get_file_structure_from_paths(list(final_context_content.keys()))
         
         context_req = context_builder.determine_context(
-            diff=diff,
+            diff=diff_text,
             commit_messages=commit_messages,
             changed_files_content=changed_files_content,
             file_structure=context_file_structure,
@@ -162,7 +165,8 @@ def review(
 
     review_results = reviewer.run_review(
         changed_files_to_review=list(changed_files_content.keys()),
-        full_context_content=final_context_content,
+        final_context_content=final_context_content,
+        diff_text=diff_text,
         review_rules=config.get('review_rules', []),
         llm_config=llm_config,
         focus_areas=final_focus_areas  

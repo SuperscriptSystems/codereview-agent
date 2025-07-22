@@ -1,25 +1,8 @@
 import json
-import ast
-from typing import Dict, List, Any
+from typing import Dict, List
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
 from .llm_client import get_client
-
-def robust_json_parser(json_string: str) -> Any:
-    """
-    Tries to parse a JSON-like string using multiple strategies.
-    1. Try standard `json.loads`.
-    2. If it fails, try less strict `ast.literal_eval`.
-    """
-    try:
-        return json.loads(json_string, strict=False)
-    except json.JSONDecodeError as e:
-        print(f"Info: json.loads failed ({e}). Falling back to ast.literal_eval.")
-        try:
-            return ast.literal_eval(json_string)
-        except (ValueError, SyntaxError) as ast_e:
-            print(f"Info: ast.literal_eval also failed ({ast_e}).")
-            raise e
 
 def _normalize_issue(raw_issue: dict) -> dict:
     """
@@ -74,11 +57,6 @@ def run_review(
     if "Performance" in focus_areas:
         focus_prompt_part += " Look for inefficient algorithms, unnecessary database calls, or memory-intensive operations."
 
-    custom_rules_instruction = ""
-    if review_rules:
-        rules_text = "\n- ".join(review_rules)
-        custom_rules_instruction = f"**Adhere to the following custom project rules:**\n- {rules_text}"
-
     system_prompt = f"""
     You are a meticulous and constructive senior software developer performing a code review.
     Your task is to analyze a file holistically and then focus your comments ONLY on the specific lines that were changed in a git diff.
@@ -92,16 +70,11 @@ def run_review(
     2.  **Analyze the Changes:** Next, look at the **full git diff** to see exactly which lines in the file were added or modified.
     3.  **Formulate Comments:** Based on your holistic understanding from step 1, provide feedback **ONLY on the changed lines** from step 2. Your comments must be relevant to the changes.
 
-    **Focus your review STRICTLY on these categories:** {', '.join(focus_areas)}.
-    
-    {custom_rules_instruction}
-
-    **CRITICAL OUTPUT RULES:**
-    1.  Your entire response MUST be a Python list of dictionaries.
-    2.  The response MUST start with `[` and end with `]`.
-    3.  Each dictionary MUST have these keys: "line_number" (int), "issue_type" (str), "comment" (str), and an optional "suggestion" (str).
-    4.  If you find NO issues, you MUST return an empty list: `[]`.
-    5.  DO NOT output any text, explanations, or markdown like ```python. ONLY the raw list.
+    **CRITICAL RULES:**
+    - DO NOT comment on existing code that was not part of the diff.
+    - If you find no issues in the changed lines, you MUST return an empty list of issues.
+    - If a fix is simple, provide a direct code suggestion in the `suggestion` field.
+    - Adhere to the following custom project rules: {' '.join(review_rules)}
     
     **CRITICAL OUTPUT FORMATTING RULE:**
     Your entire response MUST be a single, valid JSON array of objects. Do not add any other text, explanations, or markdown formatting. Your response must start with `[` and end with `]`.
@@ -136,8 +109,6 @@ def run_review(
         ```
         Return your findings as a raw JSON array string, commenting ONLY on the changed lines in `{file_path}`.
         """
-
-
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -154,16 +125,16 @@ def run_review(
 
                 if start_index != -1 and end_index != -1 and end_index > start_index:
                     json_str_cleaned = raw_response_text[start_index : end_index + 1]
-                    
-                    parsed_json = robust_json_parser(json_str_cleaned)
+                    parsed_json = json.loads(json_str_cleaned, strict=False)
                     
                     normalized_issues = [_normalize_issue(issue) for issue in parsed_json]
                     validated_result = ReviewResult(issues=normalized_issues)
                     review_results[file_path] = validated_result
                 else:
-                    raise json.JSONDecodeError("Could not find JSON array brackets `[]` in the response.", raw_response_text, 0)
-            except (ValueError, SyntaxError, ValidationError) as e:
-                print(f"⚠️ Failed to parse/validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
+                    raise json.JSONDecodeError("Could not find JSON array brackets `[]` in the response.")
+
+            except (json.JSONDecodeError, ValidationError) as e:
+                print(f"⚠️ Failed to parse or validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
                 review_results[file_path] = ReviewResult(issues=[])
 
         except Exception as e:
