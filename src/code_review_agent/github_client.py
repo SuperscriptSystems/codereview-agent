@@ -1,7 +1,10 @@
 import os
+import logging
 from github import Github
 from .models import CodeIssue
 from collections import Counter
+
+logger = logging.getLogger(__name__)
 
 _client = None
 
@@ -12,6 +15,7 @@ def _get_github_client():
         
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
+        logger.error("GITHUB_TOKEN environment variable is not set.")
         raise ValueError("GITHUB_TOKEN environment variable not set.")
     
     _client = Github(token)
@@ -37,16 +41,16 @@ def post_pr_comment(issue: CodeIssue, file_path: str):
             path=file_path,
             line=issue.line_number
         )
-        print(f"✅ Successfully posted a comment to GitHub PR #{pr_number}.")
+        logger.info(f"✅ Successfully posted a comment to GitHub PR #{pr_number}.")
     except Exception as e:
-        print(f"❌ Failed to post comment to GitHub: {e}")
+        logger.error(f"❌ Failed to post comment to GitHub: {e}", exc_info=True)
 
 def post_summary_comment(all_issues: list[CodeIssue]):
     """Posts a single summary comment with an overview of all found issues."""
     if not all_issues:
         return
 
-    print("📝 Generating and posting summary comment to GitHub...")
+    logger.info("📝 Generating and posting summary comment to GitHub...")
     try:
         client = _get_github_client()
         repo_name = os.environ["GITHUB_REPOSITORY"]
@@ -69,6 +73,6 @@ def post_summary_comment(all_issues: list[CodeIssue]):
 
         pr.create_issue_comment(summary_body)
 
-        print("✅ Successfully posted the summary comment to GitHub.")
+        logger.info("✅ Successfully posted the summary comment to GitHub.")
     except Exception as e:
-        print(f"❌ An unexpected error occurred while posting the summary comment to GitHub: {e}")
+        logger.error(f"❌ An unexpected error occurred while posting the summary comment to GitHub: {e}", exc_info=True)

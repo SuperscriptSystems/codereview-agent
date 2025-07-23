@@ -1,6 +1,7 @@
 import os
 import yaml
 import typer
+import logging
 from typing import List, Optional, Dict
 from typing_extensions import Annotated
 from dotenv import load_dotenv
@@ -11,7 +12,25 @@ from .models import IssueType, CodeIssue
 
 
 
-app = typer.Typer()
+app = typer.Typer(add_completion=False)
+
+
+def setup_logging(trace_mode: bool):
+    """Configures logging for the application."""
+    log_level = logging.DEBUG if trace_mode else logging.INFO
+    
+    log_format = '%(asctime)s - %(levelname)s - [%(name)s] - %(message)s' if trace_mode else '%(message)s'
+    
+    logging.basicConfig(
+        level=log_level,
+        format=log_format,
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True
+    )
+    
+    if trace_mode:
+        logging.info("🕵️ Trace mode enabled. Logging will be verbose.")
+
 
 
 def load_config(repo_path: str) -> dict:
@@ -28,7 +47,7 @@ def load_config(repo_path: str) -> dict:
             'llm': {}
         }
     except Exception as e:
-        typer.secho(f"Warning: Could not load or parse .codereview.yml: {e}. Using defaults.", fg=typer.colors.YELLOW)
+        logging.info(f"Warning: Could not load or parse .codereview.yml: {e}. Using defaults.")
         return {}
 
 
@@ -45,13 +64,20 @@ def review(
         "-f", "--focus", 
         help=f"Areas of focus. Can be used multiple times. Possible values: {', '.join(POSSIBLE_FOCUS_AREAS)}"
     )] = None,
+    trace: Annotated[bool, typer.Option(
+        "--trace", help="Enable detailed debug logging to the console."
+    )] = False,
 ):
     """
     Performs an AI-powered, context-aware code review using an iterative context-building approach.
     """
-    load_dotenv()
+
+    setup_logging(trace_mode=trace)
+
+    load_dotenv(override=True)
+
     if not os.getenv("LLM_API_KEY"):
-        typer.secho("Error: LLM_API_KEY is not set.", fg=typer.colors.RED, err=True)
+        logging.error("LLM_API_KEY is not set.")
         raise typer.Exit(code=1)
 
     config = load_config(repo_path)
@@ -60,8 +86,6 @@ def review(
     max_context_files = config.get('max_context_files', 25)
     llm_config = config.get('llm', {})
     filtering_config = config.get('filtering', {})
-
-    typer.secho("🔍 Gathering initial data...", fg=typer.colors.BLUE)
     
     final_focus_areas: List[str]
     if focus_from_cli:
@@ -76,17 +100,17 @@ def review(
                 typer.secho(f"Warning: Invalid focus area '{area}' ignored.", fg=typer.colors.YELLOW)
         
         final_focus_areas = valid_focus_areas
-        typer.echo("🎯 Using focus areas from command line arguments.")
+        logging.info("🎯 Using focus areas from command line arguments.")
         
     elif 'review_focus' in config and config['review_focus']:
         final_focus_areas = config['review_focus']
-        typer.echo("🎯 Using focus areas from .codereview.yml config file.")
+        logging.info("🎯 Using focus areas from .codereview.yml config file.")
     else:
         final_focus_areas = ["LogicError"]
-        typer.echo("🎯 No focus specified. Checking for 'LogicError' by default.")
+        logging.info("🎯 No focus specified. Checking for 'LogicError' by default.")
 
 
-    typer.secho("🔍 Gathering initial data...", fg=typer.colors.BLUE)
+    logging.info("🔍 Gathering initial data...")
 
     commit_messages: str
     changed_files_content: Dict[str, str]
@@ -99,7 +123,8 @@ def review(
         changed_files_content = {path: data.get('content', '') for path, data in staged_data.items()}
         commit_messages = "Reviewing staged files before commit."
     else:
-        typer.secho(f"Mode: Reviewing commit range {base_ref}..{head_ref}", bold=True)
+        logging.info(f"Mode: Reviewing commit range {base_ref}..{head_ref}")
+
         diff_text = git_utils.get_diff(repo_path, base_ref, head_ref)
         commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
         changed_file_paths = git_utils.get_changed_files_from_diff(diff_text)
@@ -108,14 +133,14 @@ def review(
     }
 
     if not changed_files_content:
-        typer.secho("✅ No changed files detected to review.", fg=typer.colors.GREEN)
+        logging.info("✅ No changed files detected to review.")
         raise typer.Exit()
 
     
     final_context_content = dict(changed_files_content)
 
     for i in range(max_iterations):
-        typer.secho(f"\n--- Context Building Iteration {i + 1}/{max_iterations} ---", bold=True)
+        logging.info(f"\n--- Context Building Iteration {i + 1}/{max_iterations} ---")
         
         context_file_structure = git_utils.get_file_structure_from_paths(list(final_context_content.keys()))
         
@@ -128,13 +153,13 @@ def review(
             llm_config=llm_config,
         )
 
-        typer.echo(f"🧠 Agent reasoning: {context_req.reasoning}")
+        logging.info(f"🧠 Agent reasoning: {context_req.reasoning}")
 
         if context_req.is_sufficient or not context_req.required_additional_files:
-            typer.secho("✅ Context is now sufficient.", fg=typer.colors.GREEN)
+            logging.info("✅ Context is now sufficient.")
             break
 
-        typer.echo(f"🔎 Searching for requested files: {context_req.required_additional_files}")
+        logging.info(f"🔎 Searching for requested files: {context_req.required_additional_files}")
         newly_found_files = git_utils.find_files_by_names(
             repo_path, 
             context_req.required_additional_files,
@@ -159,8 +184,8 @@ def review(
         typer.secho(f"⚠️ Warning: Reached max iterations ({max_iterations}).", fg=typer.colors.YELLOW)
 
 
-    typer.secho("\n--- Starting Code Review Phase ---", bold=True)
-    typer.echo(f"🎯 Review focus: {', '.join(final_focus_areas)}")
+    logging.info("\n--- Starting Code Review Phase ---")
+    logging.info(f"🎯 Review focus: {', '.join(final_focus_areas)}")
 
 
     review_results = reviewer.run_review(
@@ -172,7 +197,7 @@ def review(
         focus_areas=final_focus_areas  
     )
 
-    typer.secho("\n\n--- 🏁 Review Complete ---", bold=True, fg=typer.colors.BRIGHT_MAGENTA)
+    logging.info("\n\n--- 🏁 Review Complete ---")
 
     all_issues: List[CodeIssue] = []
     files_with_issues = {}
@@ -185,13 +210,13 @@ def review(
     is_bitbucket_pr = "BITBUCKET_PR_ID" in os.environ
     if all_issues:
         if is_github_pr:
-            typer.echo("🚀 Publishing results to GitHub PR...")
+            logging.info("🚀 Publishing results to GitHub PR...")
             for file_path, issues in files_with_issues.items():
                 for issue in issues:
                     github_client.post_pr_comment(issue, file_path)
         
         elif is_bitbucket_pr:
-            typer.echo("🚀 Publishing results to Bitbucket PR...")
+            logging.info("🚀 Publishing results to Bitbucket PR...")
             for file_path, issues in files_with_issues.items():
                 for issue in issues:
                     bitbucket_client.post_pr_comment(issue, file_path)
@@ -199,19 +224,18 @@ def review(
             
         else:
             for file_path, issues in files_with_issues.items():
-                typer.secho(f"\n🚨 Issues in `{file_path}`:", fg=typer.colors.YELLOW, bold=True)
+                logging.info(f"\n🚨 Issues in `{file_path}`:")
                 for issue in issues:
-                    typer.secho(f"  - L{issue.line_number} [{issue.issue_type}]: ", fg=typer.colors.RED, nl=False)
-                    typer.echo(issue.comment)
+                    logging.info(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
                     if issue.suggestion:
-                        typer.secho(f"    💡 Suggestion:", fg=typer.colors.CYAN)
-                        typer.echo(f"    ```\n    {issue.suggestion}\n    ```")
+                        logging.info(f"    💡 Suggestion: {issue.suggestion}")
+                        logging.info(f"    ```\n    {issue.suggestion}\n    ```")
 
 
     if not all_issues:
-        typer.secho("\n🎉 Great job! No issues found.", fg=typer.colors.GREEN, bold=True)
+        logging.info("🎉 Great job! No issues found.")
     else:
-        typer.secho(f"\nFound a total of {len(all_issues)} issue(s).", fg=typer.colors.YELLOW)
+        logging.info(f"\nFound a total of {len(all_issues)} issue(s).")
 
 def main():
     app()

@@ -1,7 +1,10 @@
 import json
+import logging
 from pydantic import ValidationError
 from .models import ContextRequirements
 from .llm_client import get_client
+
+logger = logging.getLogger(__name__)
 
 def determine_context(
     diff: str,
@@ -59,6 +62,9 @@ def determine_context(
     """
     
     try:
+        logger.debug(f"--- System Prompt for Context Builder ---\n{system_prompt}")
+        logger.debug(f"--- User Prompt for Context Builder ---\n{user_prompt}")
+
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -67,6 +73,7 @@ def determine_context(
             ],
         )
         raw_response_text = response.choices[0].message.content.strip()
+        logger.debug(f"Raw LLM response from Context Builder:\n{raw_response_text}")
 
         try:
             json_str = raw_response_text
@@ -78,10 +85,12 @@ def determine_context(
             parsed_json = json.loads(json_str, strict=False)
             validated_response = ContextRequirements(**parsed_json)
             return validated_response
+        
         except (json.JSONDecodeError, ValidationError, IndexError) as e:
-            print(f"⚠️ Failed to parse/validate LLM response for context builder. Response was: '{raw_response_text}'. Error: {e}")
+            logger.warning(f"Failed to parse/validate LLM response for context builder. Error: {e}")
+            logger.debug(f"Problematic response was: '{raw_response_text}'")
             return ContextRequirements(required_additional_files=[], is_sufficient=True, reasoning="Failed to parse LLM response.")
-
+    
     except Exception as e:
-        print(f"\n⚠️ Error in Context Builder agent: {e}")
+        logger.error(f"Error in Context Builder agent: {e}", exc_info=True)
         return ContextRequirements(required_additional_files=[], is_sufficient=True, reasoning="Error occurred during LLM call, aborting context search.")

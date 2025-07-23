@@ -1,9 +1,12 @@
 import os
 import requests
+import logging
 from requests.auth import HTTPBasicAuth
 from collections import Counter
 from .models import CodeIssue
 
+
+logger = logging.getLogger(__name__)
 
 def _get_api_details():
     """
@@ -17,6 +20,7 @@ def _get_api_details():
         repo_slug = os.environ["BITBUCKET_REPO_SLUG"]
         pr_id = os.environ["BITBUCKET_PR_ID"]
     except KeyError as e:
+        logger.error(f"Missing required Bitbucket environment variable: {e}")
         raise ValueError(f"Required Bitbucket environment variable is not set: {e}")
 
     base_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}"
@@ -47,9 +51,9 @@ def post_pr_comment(issue: CodeIssue, file_path: str):
         response = requests.post(url, headers=headers, auth=auth, json=payload)
         response.raise_for_status()
 
-        print(f"✅ Successfully posted comment to PR on file {file_path}.")
+        logger.info(f"✅ Successfully posted comment to PR on file {file_path}.")
     except (ValueError, requests.exceptions.RequestException) as e:
-        print(f"❌ Failed to post line comment: {e}")
+        logger.error(f"❌ Failed to post line comment: {e}", exc_info=True)
 
 
 def post_summary_comment(all_issues: list[CodeIssue]):
@@ -57,7 +61,7 @@ def post_summary_comment(all_issues: list[CodeIssue]):
     if not all_issues:
         return
 
-    print("📝 Generating and posting summary comment to Bitbucket...")
+    logger.info("📝 Generating and posting summary comment to Bitbucket...")
     try:
         total_issues = len(all_issues)
         issue_counts = Counter(issue.issue_type for issue in all_issues)
@@ -78,6 +82,6 @@ def post_summary_comment(all_issues: list[CodeIssue]):
         response = requests.post(url, headers=headers, auth=auth, json=payload)
         response.raise_for_status()
 
-        print("✅ Successfully posted the summary comment to Bitbucket.")
+        logger.info("✅ Successfully posted the summary comment to Bitbucket.")
     except (ValueError, requests.exceptions.RequestException) as e:
-        print(f"❌ Failed to post summary comment: {e}")
+        logger.error(f"❌ Failed to post summary comment: {e}", exc_info=True)

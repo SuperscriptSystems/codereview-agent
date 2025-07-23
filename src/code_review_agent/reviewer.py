@@ -1,9 +1,12 @@
 import json
 import ast
+import logging
 from typing import Dict, List, Any
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
 from .llm_client import get_client
+
+logger = logging.getLogger(__name__)
 
 def robust_json_parser(json_string: str) -> Any:
     """
@@ -14,11 +17,11 @@ def robust_json_parser(json_string: str) -> Any:
     try:
         return json.loads(json_string, strict=False)
     except json.JSONDecodeError as e:
-        print(f"Info: json.loads failed ({e}). Falling back to ast.literal_eval.")
+        logger.debug(f"json.loads failed: {e}. Falling back to ast.literal_eval.")
         try:
             return ast.literal_eval(json_string)
         except (ValueError, SyntaxError) as ast_e:
-            print(f"Info: ast.literal_eval also failed ({ast_e}).")
+            logger.debug(f"ast.literal_eval also failed: {ast_e}.")
             raise e
 
 def _normalize_issue(raw_issue: dict) -> dict:
@@ -53,6 +56,8 @@ def _normalize_issue(raw_issue: dict) -> dict:
             normalized['issue_type'] = 'Other'
     normalized['suggestion'] = raw_issue.get('suggestion')
     
+    logger.debug(f"Normalized issue: {normalized}")
+
     return normalized
 
 def run_review(
@@ -113,7 +118,7 @@ def run_review(
     ])
 
     for file_path in changed_files_to_review:
-        print(f"🤖 Reviewing file: {file_path}")
+        logger.info(f"Reviewing file: {file_path}")
         full_file_content = final_context_content.get(file_path, "File content not available.")
 
         user_prompt = f"""
@@ -134,6 +139,9 @@ def run_review(
 
 
         try:
+            logger.debug(f"--- System Prompt for {file_path} ---\n{system_prompt}")
+            logger.debug(f"--- User Prompt for {file_path} ---\n{user_prompt}")
+
             response = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -142,6 +150,7 @@ def run_review(
                 ]
             )
             raw_response_text = response.choices[0].message.content.strip()
+            logger.debug(f"Raw LLM response for {file_path}:\n{raw_response_text}")
 
             try:
                 start_index = raw_response_text.find('[')
@@ -156,13 +165,15 @@ def run_review(
                     validated_result = ReviewResult(issues=normalized_issues)
                     review_results[file_path] = validated_result
                 else:
+                    logger.info(f"No valid JSON array found for {file_path}. Assuming no issues.")
                     raise json.JSONDecodeError("Could not find JSON array brackets `[]` in the response.", raw_response_text, 0)
             except (ValueError, SyntaxError, ValidationError) as e:
-                print(f"⚠️ Failed to parse/validate LLM response for {file_path}. Response was: '{raw_response_text}'. Error: {e}")
+                logger.warning(f"Failed to parse/validate LLM response for {file_path}. Error: {e}")
+                logger.debug(f"Problematic response was: '{raw_response_text}'")
                 review_results[file_path] = ReviewResult(issues=[])
 
         except Exception as e:
-            print(f"\n⚠️ Critical error during LLM call for {file_path}: {e}")
+            logger.error(f"Critical error during LLM call for {file_path}: {e}", exc_info=True)
             review_results[file_path] = ReviewResult(issues=[])
 
     return review_results

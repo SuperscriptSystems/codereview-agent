@@ -1,18 +1,26 @@
 import os
 import git
+import logging
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 def get_diff(repo_path: str, base_ref: str, head_ref: str) -> str:
     """Calculates the diff between two refs using the merge base strategy."""
-    repo = git.Repo(repo_path, search_parent_directories=True)
-    base_commit = repo.commit(base_ref)
-    head_commit = repo.commit(head_ref)
-    
-    merge_base = repo.merge_base(base_commit, head_commit)
-    if not merge_base:
-        return repo.git.diff(base_commit, head_commit)
+    try:
+        repo = git.Repo(repo_path, search_parent_directories=True)
+        base_commit = repo.commit(base_ref)
+        head_commit = repo.commit(head_ref)
         
-    return repo.git.diff(merge_base[0], head_commit)
+        merge_base = repo.merge_base(base_commit, head_commit)
+        if not merge_base:
+            logger.warning(f"Could not find a merge base between {base_ref} and {head_ref}. Diffing directly.")
+            return repo.git.diff(base_commit, head_commit)
+            
+        return repo.git.diff(merge_base[0], head_commit)
+    except git.GitCommandError as e:
+        logger.error(f"A Git command failed while getting diff: {e}", exc_info=True)
+        raise
 
 def get_staged_diff_content(repo_path: str) -> Dict[str, str]:
     """Gets the content and diff for all staged files."""
@@ -32,7 +40,7 @@ def get_staged_diff_content(repo_path: str) -> Dict[str, str]:
             content = diff_item.b_blob.data_stream.read().decode('utf-8', errors='ignore')
             staged_files[file_path] = {'diff': diff_text, 'content': content}
         except Exception as e:
-            print(f"Warning: Could not process staged file {file_path}: {e}")
+            logger.warning(f"Could not process staged file {file_path}: {e}")
             
     return staged_files
 
@@ -60,8 +68,10 @@ def get_file_content(repo_path: str, file_path: str) -> str:
         with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
             return f.read()
     except FileNotFoundError:
+        logger.warning(f"File not found when trying to get content: {full_path}")
         return f"File not found: {full_path}"
     except Exception as e:
+        logger.error(f"Could not read file {full_path}: {e}", exc_info=True)
         return f"Could not read file {full_path}: {e}"
 
 def get_file_structure(root_dir: str, ignored_paths: List[str], ignored_extensions: List[str]) -> str:
@@ -78,7 +88,9 @@ def get_file_structure(root_dir: str, ignored_paths: List[str], ignored_extensio
         for f in files:
             if not any(f.endswith(ext) for ext in ignored_extensions) and not f.startswith('.'):
                 structure.append(f"{sub_indent}{f}")
-                
+    
+    logger.debug(f"Generated file structure with {len(structure)} lines.")
+
     return "\n".join(structure)
 
 
@@ -106,6 +118,7 @@ def find_files_by_names(
                 full_path = os.path.join(root, file)
                 relative_path = os.path.relpath(full_path, root_dir)
                 found_files.append(relative_path.replace('\\', '/'))
+    logger.debug(f"Searching for names {names_to_find}, found {len(found_files)} files.")
 
     return found_files
 
@@ -118,5 +131,4 @@ def get_file_structure_from_paths(paths: List[str]) -> str:
         normalized_path = path.replace('\\', '/')
 
         structure.append(f"- {normalized_path}")
-        
     return "\n".join(structure)

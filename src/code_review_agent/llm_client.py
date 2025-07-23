@@ -1,7 +1,10 @@
 import os
 from openai import OpenAI
+import logging
 from dotenv import load_dotenv
 from typing import Dict
+
+logger = logging.getLogger(__name__)
 
 def get_client(llm_config: Dict[str, any]):
     """
@@ -33,4 +36,5 @@ def get_client(llm_config: Dict[str, any]):
     try:
         return OpenAI(**client_kwargs)
     except Exception as e:
-        raise ConnectionError(f"Failed to create LLM client for provider '{provider}': {e}")
+        logger.error(f"Failed to create LLM client for provider '{provider}'", exc_info=True)
+        raise ConnectionError(f"Failed to create LLM client for provider '{provider}'.") from e
