@@ -84,6 +84,20 @@ def run_review(
         rules_text = "\n- ".join(review_rules)
         custom_rules_instruction = f"**Adhere to the following custom project rules:**\n- {rules_text}"
 
+
+    definitions_table = """
+    | Category       | Definition                                                                                                                              |
+    |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+    | `LogicError`   | Flaws in logic or algorithm. Code is valid but produces incorrect results (e.g., off-by-one errors, null reference issues, race conditions). |
+    | `CodeStyle`    | Violations of coding conventions, readability, or maintainability (e.g., inconsistent naming, magic numbers).                              |
+    | `Security`     | Vulnerabilities that could be exploited (e.g., SQL injection, XSS, hardcoded secrets).                                                    |
+    | `Suggestion`   | Code that works but could be improved through refactoring, modern features, or better clarity.                                          |
+    | `TestCoverage` | Issues related to testing (e.g., new features without tests, insufficient edge case coverage).                                           |
+    | `Clarity`      | Code that is functionally correct but hard to understand (e.g., unclear names, missing comments for complex logic).                      |
+    | `Performance`  | Code that may cause performance bottlenecks (e.g., N+1 queries, inefficient loops).                                                        |
+    | `Other`        | Valid issues that do not fit into other categories.                                                                                     |
+    """    
+
     system_prompt = f"""
     You are an expert AI code review assistant. Your sole function is to analyze code changes and output a clean, valid JSON array of issues.
 
@@ -94,6 +108,10 @@ def run_review(
     1.  **Holistic Understanding:** First, review the full content of all provided files to understand the complete context.
     2.  **Focus on Changes:** Second, analyze the `git diff` to identify the specific lines that were added or modified.
     3.  **Formulate Comments:** Finally, formulate your feedback. Your comments MUST apply ONLY to the changed lines identified in the diff.
+
+    **--- ISSUE CATEGORY DEFINITIONS ---**
+    You MUST classify every issue using one of the types from the table below.
+    {definitions_table}
 
     **--- CRITICAL RULES ---**
     1.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
@@ -123,18 +141,23 @@ def run_review(
 
         user_prompt = f"""
         Please review the file `{file_path}` according to your workflow instructions.
-        **1. Full Content of `{file_path}` (for primary analysis):**
+
+        **1. Full Content of `{file_path}` (This is the new, updated version of the file for primary analysis):**
         ```
         {full_file_content}
         ```
-        **2. Full Git Diff of all changes in this PR (use this to identify changed lines in the file above):**
+
+        **2. Full Git Diff of all changes in this PR (These are the specific changes applied to the original file; focus your comments here):**
         ```diff
         {diff_text}
         ```
+        
         **3. Full content of other relevant files (for additional context):**
-        ```        {other_files_context}
         ```
-        Return your findings as a raw JSON array string, commenting ONLY on the changed lines in `{file_path}`.
+        {other_files_context}
+        ```
+        
+        Return your findings as a raw JSON array string, commenting ONLY on the changed lines in `{file_path}` as identified in the diff.
         """
 
 
