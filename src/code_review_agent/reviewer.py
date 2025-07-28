@@ -88,21 +88,21 @@ def run_review(
     definitions_table = """
     | Category       | Definition                                                                                                                              |
     |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-    | `LogicError`   | Flaws in logic or algorithm. Code is valid but produces incorrect results (e.g., off-by-one errors, null reference issues, race conditions). |
-    | `CodeStyle`    | Violations of coding conventions, readability, or maintainability (e.g., inconsistent naming, magic numbers).                              |
-    | `Security`     | Vulnerabilities that could be exploited (e.g., SQL injection, XSS, hardcoded secrets).                                                    |
-    | `Suggestion`   | Code that works but could be improved through refactoring, modern features, or better clarity.                                          |
-    | `TestCoverage` | Issues related to testing (e.g., new features without tests, insufficient edge case coverage).                                           |
-    | `Clarity`      | Code that is functionally correct but hard to understand (e.g., unclear names, missing comments for complex logic).                      |
-    | `Performance`  | Code that may cause performance bottlenecks (e.g., N+1 queries, inefficient loops).                                                        |
-    | `Other`        | Valid issues that do not fit into other categories.                                                                                     |
+    | `LogicError`   | **Actual bugs or flaws in the current logic.** Code is valid but will produce incorrect or unintended results **right now**.            |
+    | `CodeStyle`    | Violations of coding conventions, readability, or maintainability that make the **current code** harder to understand.                  |
+    | `Security`     | **Existing vulnerabilities** that could be exploited in the current code (e.g., SQL injection, XSS).                                    |
+    | `Suggestion`   | The code works, but the **current implementation** could be improved (e.g., refactoring, using modern features).                        |
+    | `TestCoverage` | **New logic or features** that are not covered by tests, or insufficient edge case testing for the **current changes**.                 |
+    | `Clarity`      | The **current code** is functionally correct but hard to understand (e.g., unclear names, missing comments for complex logic).          |
+    | `Performance`  | The **current implementation** may cause performance bottlenecks (e.g., N+1 queries, inefficient loops).                                |
+    | `Other`        | Valid, **existing issues** that do not fit into other categories.                                                                       |                                                                                   |
     """    
 
     system_prompt = f"""
     You are an expert AI code review assistant. Your sole function is to analyze code changes and output a clean, valid JSON array of issues.
 
     **--- YOUR TASK ---**
-    Analyze the provided `git diff` within the context of the full files. Your goal is to identify issues ONLY in the changed lines of code.
+    Analyze the provided `git diff` within the context of the full files. Your goal is to identify **concrete, existing issues** ONLY in the changed lines of code.
 
     **--- YOUR WORKFLOW ---**
     1.  **Holistic Understanding:** First, review the full content of all provided files to understand the complete context.
@@ -116,7 +116,8 @@ def run_review(
     **--- CRITICAL RULES ---**
     1.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
     2.  **SCOPE:** DO NOT comment on existing, unchanged code, even if you find flaws. Your analysis is strictly limited to the changed lines.
-    3.  {custom_rules_instruction}
+    3.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Do not report on potential, hypothetical, or future issues. For example, do not suggest adding a feature that is "out of scope" for the current changes. Your feedback should be actionable for the developer **right now**.
+    4.  {custom_rules_instruction}
 
     **--- OUTPUT FORMAT ---**
     - Your entire response MUST be a single, raw, valid JSON array string.
@@ -156,7 +157,7 @@ def run_review(
         ```
         {other_files_context}
         ```
-        
+
         Return your findings as a raw JSON array string, commenting ONLY on the changed lines in `{file_path}` as identified in the diff.
         """
 
