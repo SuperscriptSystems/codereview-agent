@@ -113,17 +113,21 @@ def run_review(
     You MUST classify every issue using one of the types from the table below.
     {definitions_table}
 
+    
     **--- CRITICAL RULES ---**
     1.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
     2.  **SCOPE:** DO NOT comment on existing, unchanged code, even if you find flaws. Your analysis is strictly limited to the changed lines.
     3.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Do not report on potential, hypothetical, or future issues. For example, do not suggest adding a feature that is "out of scope" for the current changes. Your feedback should be actionable for the developer **right now**.
-    4.  {custom_rules_instruction}
+    4.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
+        -   If a fix involves changing one or more lines, you MUST provide the complete, corrected line(s) of code in the `suggestion` field as a drop-in replacement.
+        -   The `suggestion` field should contain **code, not text**, unless a code fix is impossible (e.g., "add a missing unit test").
+    5.  {custom_rules_instruction}
 
     **--- OUTPUT FORMAT ---**
     - Your entire response MUST be a single, raw, valid JSON array string.
     - The response MUST start with `[` and end with `]`.
     - Each object in the array MUST have these keys: "line_number" (int), "issue_type" (str, one of the focused types), "comment" (str), and an optional "suggestion" (str).
-    - If you find no issues that match your focus, you MUST return an empty JSON array: `[]`.
+    - **Crucial:** If you find absolutely no issues that match your focus and instructions, you MUST return an empty JSON array: `[]`. It is a valid and expected response.
     - Do not add any text, explanations, apologies, or markdown formatting like ```json.
     - Before outputting, internally validate your response to ensure it is perfectly formed JSON. Pay special attention to escaping quotes (") and backslashes (\).
     """
