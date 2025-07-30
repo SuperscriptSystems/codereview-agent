@@ -104,10 +104,10 @@ def run_review(
     **--- YOUR TASK ---**
     Analyze the provided `git diff` within the context of the full files. Your goal is to identify **concrete, existing issues** ONLY in the changed lines of code.
 
-    **--- YOUR WORKFLOW ---**
-    1.  **Holistic Understanding:** First, review the full content of all provided files to understand the complete context.
-    2.  **Focus on Changes:** Second, analyze the `git diff` to identify the specific lines that were added or modified.
-    3.  **Formulate Comments:** Finally, formulate your feedback. Your comments MUST apply ONLY to the changed lines identified in the diff.
+    **--- YOUR WORKFLOW (CRITICAL - FOLLOW IT EXACTLY) ---**
+    1.  **PRIMARY ANALYSIS (THE FILE):** First, thoroughly read and understand the **full content of the file** provided in the user prompt (`Full Content of <filename>`). This is your primary source of context. Analyze its logic, structure, and potential issues based on your expertise.
+    2.  **IDENTIFY CHANGES (THE DIFF):** After analyzing the full file, look at the provided **git diff**. Use this diff ONLY as a filter to identify exactly which lines within the full file were added or modified.
+    3.  **FORMULATE FEEDBACK (COMMENTS):** Finally, based on your holistic understanding of the file from Step 1, formulate your feedback. Your final JSON output MUST only contain issues for lines that were identified as changed in Step 2. If you find a flaw in the file's logic, but that specific line was not part of the diff, you MUST ignore it.
 
     **--- ISSUE CATEGORY DEFINITIONS ---**
     You MUST classify every issue using one of the types from the table below.
