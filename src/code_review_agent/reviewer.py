@@ -5,6 +5,7 @@ from typing import Dict, List, Any
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
 from .llm_client import get_client
+from . import git_utils
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,8 @@ def _normalize_issue(raw_issue: dict) -> dict:
     return normalized
 
 def run_review(
-    changed_files_to_review: List[str],
+    changed_files_map: Dict[str, str],
     final_context_content: Dict[str, str],
-    diff_text: str,
     review_rules: List[str],
     llm_config: dict,
     focus_areas: List[IssueType]
@@ -99,15 +99,10 @@ def run_review(
     """    
 
     system_prompt = f"""
-    You are an expert AI code review assistant. Your sole function is to analyze code changes and output a clean, valid JSON array of issues.
+    You are an expert AI code review assistant. Your task is to analyze the provided file content, where changed lines are marked with `+` (added) or `-` (removed), and provide feedback as a clean JSON array.
 
     **--- YOUR TASK ---**
-    Analyze the provided `git diff` within the context of the full files. Your goal is to identify **concrete, existing issues** ONLY in the changed lines of code.
-
-    **--- YOUR WORKFLOW (CRITICAL - FOLLOW IT EXACTLY) ---**
-    1.  **PRIMARY ANALYSIS (THE FILE):** First, thoroughly read and understand the **full content of the file** provided in the user prompt (`Full Content of <filename>`). This is your primary source of context. Analyze its logic, structure, and potential issues based on your expertise.
-    2.  **IDENTIFY CHANGES (THE DIFF):** After analyzing the full file, look at the provided **git diff**. Use this diff ONLY as a filter to identify exactly which lines within the full file were added or modified.
-    3.  **FORMULATE FEEDBACK (COMMENTS):** Finally, based on your holistic understanding of the file from Step 1, formulate your feedback. Your final JSON output MUST only contain issues for lines that were identified as changed in Step 2. If you find a flaw in the file's logic, but that specific line was not part of the diff, you MUST ignore it.
+    Analyze the **annotated file content** to identify **concrete, existing issues** ONLY in the changed lines (marked with `+` or `-`).
 
     **--- ISSUE CATEGORY DEFINITIONS ---**
     You MUST classify every issue using one of the types from the table below.
@@ -115,8 +110,8 @@ def run_review(
 
     
     **--- CRITICAL RULES ---**
-    1.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
-    2.  **SCOPE:** DO NOT comment on existing, unchanged code, even if you find flaws. Your analysis is strictly limited to the changed lines.
+    1.  **SCOPE:** Your comments and `line_number` MUST correspond to lines marked with `+` or `-`. DO NOT comment on unchanged 
+    2.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
     3.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Do not report on potential, hypothetical, or future issues. For example, do not suggest adding a feature that is "out of scope" for the current changes. Your feedback should be actionable for the developer **right now**.
     4.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
         -   If a fix involves changing one or more lines, you MUST provide the complete, corrected line(s) of code in the `suggestion` field as a drop-in replacement.
@@ -133,36 +128,21 @@ def run_review(
     """
 
     review_results = {}
-    
-    other_files_context = "\n".join([
-        f"--- START FILE: {path} ---\n{content}\n--- END FILE: {path} ---" 
-        for path, content in final_context_content.items() 
-        if path not in changed_files_to_review
-    ])
 
-    for file_path in changed_files_to_review:
+    for file_path, diff_content in changed_files_map.items():
         logger.info(f"Reviewing file: {file_path}")
         full_file_content = final_context_content.get(file_path, "File content not available.")
 
-        user_prompt = f"""
-        Please review the file `{file_path}` according to your workflow instructions.
-
-        **1. Full Content of `{file_path}` (This is the new, updated version of the file for primary analysis):**
-        ```
-        {full_file_content}
-        ```
-
-        **2. Full Git Diff of all changes in this PR (These are the specific changes applied to the original file; focus your comments here):**
-        ```diff
-        {diff_text}
-        ```
+        annotated_content = git_utils.create_annotated_file(full_file_content, diff_content)
         
-        **3. Full content of other relevant files (for additional context):**
-        ```
-        {other_files_context}
-        ```
+        user_prompt = f"""
+        Please review the following annotated file: `{file_path}`.
+        Return your findings as a raw JSON array string.
 
-        Return your findings as a raw JSON array string, commenting ONLY on the changed lines in `{file_path}` as identified in the diff.
+        **Annotated File Content for `{file_path}`:**
+        ```
+        {annotated_content}
+        ```
         """
 
 

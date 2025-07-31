@@ -1,5 +1,7 @@
 import os
+import io
 import git
+from unidiff import PatchSet
 import logging
 from typing import List, Dict
 
@@ -132,3 +134,61 @@ def get_file_structure_from_paths(paths: List[str]) -> str:
 
         structure.append(f"- {normalized_path}")
     return "\n".join(structure)
+
+
+def create_annotated_file(full_content: str, diff_content: str) -> str:
+    """
+    Merges a full file content with its diff to create an annotated version.
+    Lines unchanged are prefixed with '  ', added with '+ ', removed with '- '.
+    """
+    if not diff_content:
+        return full_content
+
+    try:
+        patch = PatchSet(io.StringIO(diff_content))
+        
+        if not patch:
+            return full_content
+
+        patched_file = patch[0]
+        
+        annotated_lines = full_content.splitlines()
+        hunks = list(patched_file)
+
+        changes = {}
+        for hunk in hunks:
+            for line in hunk:
+                line_type = line.line_type
+                if line_type == '+':
+                    changes[line.target_line_no - 1] = ('+', line.value)
+                elif line_type == '-':
+                    pass
+
+        for hunk in hunks:
+            for line in hunk:
+                if line.line_type == '-':
+                    insert_pos = line.target_line_no - 1
+                    while insert_pos in changes:
+                        insert_pos += 1
+                    changes[insert_pos] = ('-', line.value)
+                    
+        result = []
+        original_line_idx = 0
+        final_line_idx = 0
+        
+        while original_line_idx < len(annotated_lines) or any(k >= final_line_idx for k in changes):
+            if final_line_idx in changes:
+                line_type, value = changes[final_line_idx]
+                result.append(f"{line_type} {value}")
+                if line_type != '-':
+                    original_line_idx += 1
+            else:
+                if original_line_idx < len(annotated_lines):
+                    result.append(f"  {annotated_lines[original_line_idx]}")
+                    original_line_idx += 1
+            final_line_idx += 1
+
+        return "\n".join(result)
+
+    except Exception:
+        return f"--- FULL FILE CONTENT ---\n{full_content}\n\n--- GIT DIFF ---\n{diff_content}"

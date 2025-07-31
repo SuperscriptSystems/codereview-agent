@@ -5,6 +5,8 @@ import logging
 from typing import List, Optional, Dict
 from typing_extensions import Annotated
 from dotenv import load_dotenv
+from unidiff import PatchSet
+import io
 
 from . import bitbucket_client, github_client
 from . import git_utils, context_builder, reviewer
@@ -113,24 +115,28 @@ def review(
     logging.info("🔍 Gathering initial data...")
 
     commit_messages: str
-    changed_files_content: Dict[str, str]
-    diff_text: str
+    changed_files_content: Dict[str, str] = {}
+    changed_files_map: Dict[str, str] = {}
     
     if staged:
+        typer.secho("Mode: Reviewing STAGED files.", bold=True)
         staged_data = git_utils.get_staged_diff_content(repo_path)
-        diff_text = "\n".join([v.get('diff', '') for v in staged_data.values()])
-
-        changed_files_content = {path: data.get('content', '') for path, data in staged_data.items()}
+        for path, data in staged_data.items():
+            changed_files_map[path] = data.get('diff', '')
+            changed_files_content[path] = data.get('content', '')
         commit_messages = "Reviewing staged files before commit."
     else:
         logging.info(f"Mode: Reviewing commit range {base_ref}..{head_ref}")
 
-        diff_text = git_utils.get_diff(repo_path, base_ref, head_ref)
+
+        diff_text  = git_utils.get_diff(repo_path, base_ref, head_ref)
         commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
-        changed_file_paths = git_utils.get_changed_files_from_diff(diff_text)
-        changed_files_content = {
-        path: git_utils.get_file_content(repo_path, path) for path in changed_file_paths
-    }
+
+        patch = PatchSet(io.StringIO(diff_text))
+        for patched_file in patch:
+            file_path = patched_file.target_file[2:]
+            changed_files_map[file_path] = str(patched_file)
+            changed_files_content[file_path] = git_utils.get_file_content(repo_path, file_path)
 
     if not changed_files_content:
         logging.info("✅ No changed files detected to review.")
@@ -140,14 +146,14 @@ def review(
     final_context_content = dict(changed_files_content)
 
     for i in range(max_iterations):
-        logging.info(f"\n--- Context Building Iteration {i + 1}/{max_iterations} ---")
+        logging.info(f"--- Context Building Iteration {i + 1}/{max_iterations} ---")
         
         context_file_structure = git_utils.get_file_structure_from_paths(list(final_context_content.keys()))
         
         context_req = context_builder.determine_context(
             diff=diff_text,
             commit_messages=commit_messages,
-            changed_files_content=changed_files_content,
+            changed_files_content=final_context_content, 
             file_structure=context_file_structure,
             current_context_files=list(final_context_content.keys()),
             llm_config=llm_config,
@@ -189,9 +195,8 @@ def review(
 
 
     review_results = reviewer.run_review(
-        changed_files_to_review=list(changed_files_content.keys()),
+        changed_files_map=changed_files_map,
         final_context_content=final_context_content,
-        diff_text=diff_text,
         review_rules=config.get('review_rules', []),
         llm_config=llm_config,
         focus_areas=final_focus_areas  
