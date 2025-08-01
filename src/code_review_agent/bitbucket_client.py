@@ -64,23 +64,29 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
         response.raise_for_status()
         old_comments = response.json().get('values', [])
         
-        if old_comments:
-            logger.info(f"Sample user object from first comment: {old_comments[0].get('user')}")
+        logger.info(f"--- DIAGNOSING COMMENTS ---")
+        logger.info(f"Bot's Account ID to match: {bot_account_id}")
+        logger.info(f"Found {len(old_comments)} total comments in the PR.")
+        
+        for i, comment in enumerate(old_comments):
+            user_obj = comment.get('user', {})
+            logger.info(f"Comment #{i+1} - User Object: {user_obj}")
+        
+        logger.info(f"--------------------------")
 
-        bot_comments = []
-        for comment in old_comments:
-            user = comment.get('user', {})
-            user_identifier = user.get('account_id') or user.get('uuid')
-            
-            if user_identifier == bot_account_id:
-                bot_comments.append(comment)
+        bot_comments = [
+            comment for comment in old_comments
+            if (comment.get('user', {}).get('account_id') == bot_account_id) or \
+               (comment.get('user', {}).get('uuid') == bot_account_id)
+        ]
         
-        for comment in bot_comments:
-            delete_url = f"{comments_url}/{comment['id']}"
-            requests.delete(delete_url, auth=auth)
-            
-        logger.info(f"   - Deleted {len(bot_comments)} old comment(s).")
-        
+        logger.info(f"   - Found {len(bot_comments)} old comment(s) from this agent to delete.")
+        if bot_comments:
+            for comment in bot_comments:
+                delete_url = f"{comments_url}/{comment['id']}"
+                requests.delete(delete_url, auth=auth)
+            logger.info(f"   - Successfully deleted old comments.")
+
         _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
 
     except (ValueError, requests.exceptions.RequestException) as e:
