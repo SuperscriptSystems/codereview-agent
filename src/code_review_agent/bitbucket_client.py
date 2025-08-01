@@ -64,10 +64,16 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
         response.raise_for_status()
         old_comments = response.json().get('values', [])
         
-        bot_comments = [
-            comment for comment in old_comments
-            if comment.get('user', {}).get('account_id') == bot_account_id
-        ]
+        if old_comments:
+            logger.info(f"Sample user object from first comment: {old_comments[0].get('user')}")
+
+        bot_comments = []
+        for comment in old_comments:
+            user = comment.get('user', {})
+            user_identifier = user.get('account_id') or user.get('uuid')
+            
+            if user_identifier == bot_account_id:
+                bot_comments.append(comment)
         
         for comment in bot_comments:
             delete_url = f"{comments_url}/{comment['id']}"
