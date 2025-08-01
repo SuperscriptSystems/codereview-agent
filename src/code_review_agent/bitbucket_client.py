@@ -58,34 +58,38 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
 
         logger.info("   - Searching for and deleting old bot comments...")
         
-        comments_url = f"{base_url}/comments"
+        all_old_comments = []
+        url = f"{base_url}/comments"
         
-        response = requests.get(comments_url, auth=auth)
-        response.raise_for_status()
-        old_comments = response.json().get('values', [])
+        while url:
+            response = requests.get(url, auth=auth)
+            response.raise_for_status()
+            data = response.json()
+            all_old_comments.extend(data.get('values', []))
+            url = data.get('next', None)
+            if url:
+                logger.info(f"   - Fetching next page of comments...")
         
-        logger.info(f"--- DIAGNOSING COMMENTS ---")
-        logger.info(f"Bot's Account ID to match: {bot_account_id}")
-        logger.info(f"Found {len(old_comments)} total comments in the PR.")
-        
-        for i, comment in enumerate(old_comments):
-            user_obj = comment.get('user', {})
-            logger.info(f"Comment #{i+1} - User Object: {user_obj}")
-        
-        logger.info(f"--------------------------")
-
         bot_comments = [
-            comment for comment in old_comments
+            comment for comment in all_old_comments
             if (comment.get('user', {}).get('account_id') == bot_account_id) or \
                (comment.get('user', {}).get('uuid') == bot_account_id)
         ]
-        
+
         logger.info(f"   - Found {len(bot_comments)} old comment(s) from this agent to delete.")
         if bot_comments:
+            delete_url_template = f"{base_url}/comments"
+            deletions_successful = 0
             for comment in bot_comments:
-                delete_url = f"{comments_url}/{comment['id']}"
-                requests.delete(delete_url, auth=auth)
-            logger.info(f"   - Successfully deleted old comments.")
+                    delete_url = f"{delete_url_template}/{comment['id']}"
+                    try:
+                        response = requests.delete(delete_url, auth=auth)
+                        response.raise_for_status() 
+                        deletions_successful += 1
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"   - FAILED to delete comment ID {comment['id']}. Status: {e.response.status_code if e.response else 'N/A'}. Response: {e.response.text if e.response else e}")
+                
+            logger.info(f"   - Successfully deleted {deletions_successful} out of {len(bot_comments)} comment(s).")
 
         _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
 
