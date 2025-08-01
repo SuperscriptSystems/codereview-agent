@@ -105,8 +105,8 @@ def run_review(
     1.  **Be Helpful, Not Annoying:** Be friendly and assume you might be wrong. Your goal is to help, not to criticize.
     2.  **Focus on Concrete Technical Errors:** Prioritize clear, objective issues like copy-paste errors, logical flaws, N+1 query problems, race conditions, and similar technical bugs.
     3.  **No Evidence, No Comment:** If a change *could* potentially cause a problem elsewhere (e.g., an interface change), but you have no direct evidence from the provided context that it *does* cause a problem, you MUST ignore it. Do not speculate about hypothetical issues.
-    4.  **Minimize Test Feedback:** You can use tests for context, but your feedback on the test code itself should be minimal unless you find a critical logic error in a test.
-
+    4.  **IGNORE TEST FILES:** You are strictly forbidden from analyzing or commenting on test files. If a file path contains "Test" or "Spec", or is inside a "tests" or "specs" directory, you MUST ignore it and return an empty result for that file.
+    
     **--- YOUR TASK ---**
     Analyze the **annotated file content** to identify **concrete, existing issues** ONLY in the changed lines (marked with `+` or `-`).
 
