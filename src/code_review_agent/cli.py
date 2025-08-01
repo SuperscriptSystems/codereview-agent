@@ -221,11 +221,7 @@ def review(
                     github_client.post_pr_comment(issue, file_path)
         
         elif is_bitbucket_pr:
-            logging.info("🚀 Publishing results to Bitbucket PR...")
-            for file_path, issues in files_with_issues.items():
-                for issue in issues:
-                    bitbucket_client.post_pr_comment(issue, file_path)
-            bitbucket_client.post_summary_comment(all_issues)
+            bitbucket_client.cleanup_and_post_all_comments(all_issues, files_with_issues)
             
         else:
             for file_path, issues in files_with_issues.items():

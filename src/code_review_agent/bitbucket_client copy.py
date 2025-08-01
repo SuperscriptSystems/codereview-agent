@@ -30,66 +30,33 @@ def _get_api_details():
     return base_url, auth, headers
 
 
-def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues: dict):
-    """
-    Cleans up old comments from the bot and posts new ones.
-    This is the main entry point from the CLI.
-    """
-    logger.info("🚀 Publishing results to Bitbucket PR...")
+def post_pr_comment(issue: CodeIssue, file_path: str):
+    """Posts a single review comment to a specific line in a Bitbucket Pull Request."""
     try:
         base_url, auth, headers = _get_api_details()
-        bot_username = os.environ.get("BITBUCKET_APP_USERNAME")
-
-        logger.info("   - Searching for and deleting old bot comments...")
-        
-        comments_url = f"{base_url}/comments"
-        
-        response = requests.get(comments_url, auth=auth)
-        response.raise_for_status()
-        
-        old_comments = response.json().get('values', [])
-        
-        bot_comments = [
-            comment for comment in old_comments
-            if comment.get('user', {}).get('display_name') == bot_username
-        ]
-        
-        for comment in bot_comments:
-            delete_url = f"{comments_url}/{comment['id']}"
-            requests.delete(delete_url, auth=auth)
-            
-        logger.info(f"   - Deleted {len(bot_comments)} old comment(s).")
-
-        for file_path, issues in files_with_issues.items():
-            for issue in issues:
-                _post_pr_comment(issue, file_path, base_url, auth, headers)
-        
-        _post_summary_comment(all_issues, base_url, auth, headers)
-
-    except (ValueError, requests.exceptions.RequestException) as e:
-        logger.error(f"❌ An error occurred during the publishing process: {e}", exc_info=True)
-
-
-def _post_pr_comment(issue: CodeIssue, file_path: str, base_url: str, auth: HTTPBasicAuth, headers: dict):
-    """Posts a single review comment to a specific line."""
-    try:
         url = f"{base_url}/comments"
+
         comment_body = f"**[{issue.issue_type}]**\n\n{issue.comment}"
         if issue.suggestion:
             comment_body += f"\n\n**Suggestion:**\n```\n{issue.suggestion}\n```"
 
         payload = {
             "content": {"raw": comment_body},
-            "inline": {"path": file_path, "to": issue.line_number}
+            "inline": {
+                "path": file_path,
+                "to": issue.line_number
+            }
         }
+
         response = requests.post(url, headers=headers, auth=auth, json=payload)
         response.raise_for_status()
+
         logger.info(f"✅ Successfully posted comment to PR on file {file_path}.")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Failed to post line comment for file {file_path}: {e}", exc_info=True)
+    except (ValueError, requests.exceptions.RequestException) as e:
+        logger.error(f"❌ Failed to post line comment: {e}", exc_info=True)
 
 
-def _post_summary_comment(all_issues: list[CodeIssue], base_url: str, auth: HTTPBasicAuth, headers: dict):
+def post_summary_comment(all_issues: list[CodeIssue]):
     """Posts a single summary comment to the Bitbucket Pull Request."""
     if not all_issues:
         return
@@ -104,8 +71,9 @@ def _post_summary_comment(all_issues: list[CodeIssue], base_url: str, auth: HTTP
             summary_body += "**Issue Breakdown:**\n"
             for issue_type, count in issue_counts.items():
                 summary_body += f"* **{issue_type}:** {count} issue(s)\n"
-        summary_body = f"### 🤖 AI Code Review Summary\n\nFound **{total_issues} potential issue(s)**."
+        summary_body += "\n---\n*Please see the detailed inline comments on the \"Diff\" tab for more context.*"
 
+        base_url, auth, headers = _get_api_details()
         url = f"{base_url}/comments"
         payload = {
             "content": {"raw": summary_body}

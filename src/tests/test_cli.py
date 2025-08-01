@@ -26,7 +26,6 @@ def mock_dependencies(mocker):
     mocker.patch('code_review_agent.git_utils.get_changed_files_from_diff', return_value=["main.py"])
     mocker.patch('code_review_agent.git_utils.get_file_content', return_value="def main(): pass")
     
-    # Мокуємо агентів
     mocker.patch('code_review_agent.context_builder.determine_context', return_value=ContextRequirements(
         required_additional_files=[], is_sufficient=True, reasoning="Sufficient for test."
     ))
