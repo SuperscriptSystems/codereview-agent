@@ -27,7 +27,19 @@ def _get_api_details():
     auth = HTTPBasicAuth(username, app_password)
     headers = {"Content-Type": "application/json"}
     
-    return base_url, auth, headers
+    bot_account_id = None
+    try:
+        auth_check_response = requests.get("https://api.bitbucket.org/2.0/user", auth=auth)
+        auth_check_response.raise_for_status()
+
+        bot_account_id = auth_check_response.json().get('account_id')
+        
+        logger.info(f"✅ Successfully authenticated to Bitbucket as user with account_id: {bot_account_id}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ CRITICAL: Failed to authenticate with Bitbucket. Check credentials. Error: {e}")
+        raise ValueError("Authentication failed.")
+        
+    return base_url, auth, headers, bot_account_id
 
 
 def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues: dict):
@@ -37,8 +49,12 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
     """
     logger.info("🚀 Publishing results to Bitbucket PR...")
     try:
-        base_url, auth, headers = _get_api_details()
-        bot_username = os.environ.get("BITBUCKET_APP_USERNAME")
+        base_url, auth, headers, bot_account_id = _get_api_details()
+
+        if not bot_account_id:
+            logger.error("Could not determine bot account ID. Skipping comment cleanup.")
+            _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
+            return
 
         logger.info("   - Searching for and deleting old bot comments...")
         
@@ -46,12 +62,11 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
         
         response = requests.get(comments_url, auth=auth)
         response.raise_for_status()
-        
         old_comments = response.json().get('values', [])
         
         bot_comments = [
             comment for comment in old_comments
-            if comment.get('user', {}).get('display_name') == bot_username
+            if comment.get('user', {}).get('account_id') == bot_account_id
         ]
         
         for comment in bot_comments:
@@ -64,7 +79,7 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
             for issue in issues:
                 _post_pr_comment(issue, file_path, base_url, auth, headers)
         
-        _post_summary_comment(all_issues, base_url, auth, headers)
+        _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
 
     except (ValueError, requests.exceptions.RequestException) as e:
         logger.error(f"❌ An error occurred during the publishing process: {e}", exc_info=True)
@@ -117,3 +132,11 @@ def _post_summary_comment(all_issues: list[CodeIssue], base_url: str, auth: HTTP
         logger.info("✅ Successfully posted the summary comment to Bitbucket.")
     except (ValueError, requests.exceptions.RequestException) as e:
         logger.error(f"❌ Failed to post summary comment: {e}", exc_info=True)
+
+
+def _publish_without_cleanup(all_issues: list[CodeIssue], files_with_issues: dict, base_url: str, auth: HTTPBasicAuth, headers: dict):
+    """Helper function to post comments without cleaning up."""
+    for file_path, issues in files_with_issues.items():
+        for issue in issues:
+            _post_pr_comment(issue, file_path, base_url, auth, headers)
+    _post_summary_comment(all_issues, base_url, auth, headers)
