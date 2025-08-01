@@ -106,7 +106,7 @@ def run_review(
     2.  **Focus on Concrete Technical Errors:** Prioritize clear, objective issues like copy-paste errors, logical flaws, N+1 query problems, race conditions, and similar technical bugs.
     3.  **No Evidence, No Comment:** If a change *could* potentially cause a problem elsewhere (e.g., an interface change), but you have no direct evidence from the provided context that it *does* cause a problem, you MUST ignore it. Do not speculate about hypothetical issues.
     4.  **IGNORE TEST FILES:** You are strictly forbidden from analyzing or commenting on test files. If a file path contains "Test" or "Spec", or is inside a "tests" or "specs" directory, you MUST ignore it and return an empty result for that file.
-    
+
     **--- YOUR TASK ---**
     Analyze the **annotated file content** to identify **concrete, existing issues** ONLY in the changed lines (marked with `+` or `-`).
 
@@ -122,7 +122,9 @@ def run_review(
     4.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
         -   If a fix involves changing one or more lines, you MUST provide the complete, corrected line(s) of code in the `suggestion` field as a drop-in replacement.
         -   The `suggestion` field should contain **code, not text**, unless a code fix is impossible (e.g., "add a missing unit test").
-    5.  {custom_rules_instruction}
+    5.  **AVOID REDUNDANT SUGGESTIONS:** Before making a suggestion, you MUST check if the existing code already implements the best practice you are recommending. **DO NOT suggest a change that is identical to the existing code.** Your feedback must provide new, valuable information.    
+    6.  {custom_rules_instruction}
+
 
     **--- OUTPUT FORMAT ---**
     - Your entire response MUST be a single, raw, valid JSON array string.
