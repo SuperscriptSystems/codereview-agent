@@ -106,6 +106,7 @@ def run_review(
     2.  **Focus on Concrete Technical Errors:** Prioritize clear, objective issues like copy-paste errors, logical flaws, N+1 query problems, race conditions, and similar technical bugs.
     3.  **No Evidence, No Comment:** If a change *could* potentially cause a problem elsewhere (e.g., an interface change), but you have no direct evidence from the provided context that it *does* cause a problem, you MUST ignore it. Do not speculate about hypothetical issues.
     4.  **IGNORE TEST FILES:** You are strictly forbidden from analyzing or commenting on test files. If a file path contains "Test" or "Spec", or is inside a "tests" or "specs" directory, you MUST ignore it and return an empty result for that file.
+    5.  **Consolidate Feedback:** Before generating the output, review all the potential issues you've found for a single file. **You MUST merge related or overlapping comments into a single, comprehensive comment.** If you identify the same underlying problem from different angles, report it ONLY ONCE under the most severe category. Your goal is high-signal, low-noise feedback.
 
     **--- YOUR TASK ---**
     Analyze the **annotated file content** to identify **concrete, existing issues** ONLY in the changed lines (marked with `+` or `-`).

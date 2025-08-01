@@ -74,10 +74,6 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
             requests.delete(delete_url, auth=auth)
             
         logger.info(f"   - Deleted {len(bot_comments)} old comment(s).")
-
-        for file_path, issues in files_with_issues.items():
-            for issue in issues:
-                _post_pr_comment(issue, file_path, base_url, auth, headers)
         
         _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
 
@@ -119,7 +115,7 @@ def _post_summary_comment(all_issues: list[CodeIssue], base_url: str, auth: HTTP
             summary_body += "**Issue Breakdown:**\n"
             for issue_type, count in issue_counts.items():
                 summary_body += f"* **{issue_type}:** {count} issue(s)\n"
-        summary_body = f"### 🤖 AI Code Review Summary\n\nFound **{total_issues} potential issue(s)**."
+        summary_body += "\n---\n*Please see the detailed inline comments on the \"Diff\" tab for more context.*"
 
         url = f"{base_url}/comments"
         payload = {
