@@ -213,24 +213,23 @@ def review(
 
     is_github_pr = "GITHUB_ACTIONS" in os.environ and "GITHUB_PR_NUMBER" in os.environ
     is_bitbucket_pr = "BITBUCKET_PR_ID" in os.environ
-    if all_issues:
-        if is_github_pr:
-            logging.info("🚀 Publishing results to GitHub PR...")
-            for file_path, issues in files_with_issues.items():
-                for issue in issues:
-                    github_client.post_pr_comment(issue, file_path)
+    
+    if is_github_pr:
+        logging.info("🚀 Publishing results to GitHub PR...")
+        github_client.handle_pr_results(all_issues, files_with_issues)
+
+    elif is_bitbucket_pr:
+        logging.info("🚀 Publishing results to Bitbucket PR...")
+        bitbucket_client.cleanup_and_post_all_comments(all_issues, files_with_issues)
         
-        elif is_bitbucket_pr:
-            bitbucket_client.cleanup_and_post_all_comments(all_issues, files_with_issues)
-            
-        else:
-            for file_path, issues in files_with_issues.items():
-                logging.info(f"\n🚨 Issues in `{file_path}`:")
-                for issue in issues:
-                    logging.info(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
-                    if issue.suggestion:
-                        logging.info(f"    💡 Suggestion: {issue.suggestion}")
-                        logging.info(f"    ```\n    {issue.suggestion}\n    ```")
+    elif all_issues:
+        for file_path, issues in files_with_issues.items():
+            logging.info(f"\n🚨 Issues in `{file_path}`:")
+            for issue in issues:
+                logging.info(f"  - L{issue.line_number} [{issue.issue_type}]: {issue.comment}")
+                if issue.suggestion:
+                    logging.info(f"    💡 Suggestion: {issue.suggestion}")
+                    logging.info(f"    ```\n    {issue.suggestion}\n    ```")
 
 
     if not all_issues:

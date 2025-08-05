@@ -120,11 +120,11 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
             
         else:
             logger.info(f"   - Found {len(all_issues)} issue(s). Posting comments.")
-            
-            requests.delete(approve_url, auth=auth)
-            logger.info("   - Ensured PR is not approved by this agent (removed approval if existed).")    
 
-        _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
+            requests.delete(approve_url, auth=auth)
+            logger.info("   - Ensured PR is not approved by this agent (removed approval if existed).")
+
+            _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
 
     except (ValueError, requests.exceptions.RequestException) as e:
         logger.error(f"❌ An error occurred during the publishing process: {e}", exc_info=True)
