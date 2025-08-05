@@ -62,7 +62,7 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
         url = f"{base_url}/comments"
         
         while url:
-            response = requests.get(url, auth=auth)
+            response = requests.get(url, auth=auth, headers=headers)
             response.raise_for_status()
             data = response.json()
             all_old_comments.extend(data.get('values', []))
@@ -72,24 +72,57 @@ def cleanup_and_post_all_comments(all_issues: list[CodeIssue], files_with_issues
         
         bot_comments = [
             comment for comment in all_old_comments
-            if (comment.get('user', {}).get('account_id') == bot_account_id) or \
-               (comment.get('user', {}).get('uuid') == bot_account_id)
+            if (comment.get('user', {}).get('account_id') == bot_account_id)
         ]
 
+        parent_comment_ids = {
+            comment['parent']['id']
+            for comment in all_old_comments
+            if 'parent' in comment and comment.get('parent')
+        }
+
+        comments_to_delete = [
+            comment for comment in bot_comments
+            if comment['id'] not in parent_comment_ids
+        ]
+
+
         logger.info(f"   - Found {len(bot_comments)} old comment(s) from this agent to delete.")
-        if bot_comments:
+        logger.info(f"   - Found {len(comments_to_delete)} of them are unanswered and will be deleted.")
+
+
+        if comments_to_delete:
             delete_url_template = f"{base_url}/comments"
             deletions_successful = 0
-            for comment in bot_comments:
-                    delete_url = f"{delete_url_template}/{comment['id']}"
-                    try:
-                        response = requests.delete(delete_url, auth=auth)
-                        response.raise_for_status() 
-                        deletions_successful += 1
-                    except requests.exceptions.RequestException as e:
-                        logger.error(f"   - FAILED to delete comment ID {comment['id']}. Status: {e.response.status_code if e.response else 'N/A'}. Response: {e.response.text if e.response else e}")
-                
-            logger.info(f"   - Successfully deleted {deletions_successful} out of {len(bot_comments)} comment(s).")
+            for comment in comments_to_delete:
+                delete_url = f"{delete_url_template}/{comment['id']}"
+                try:
+                    response = requests.delete(delete_url, auth=auth)
+                    response.raise_for_status() 
+                    deletions_successful += 1
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"   - FAILED to delete comment ID {comment['id']}. Details: {e}")
+            
+            logger.info(f"   - Successfully deleted {deletions_successful} out of {len(comments_to_delete)} comment(s).")
+
+
+        approve_url = f"{base_url}/approve"
+
+        if not all_issues:
+            logger.info("✅ No issues found. Posting approval comment and approving PR.")
+            
+            approve_comment_payload = {"content": {"raw": "Excellent work! The AI agent didn't find any issues. Keep up the great contributions! 🎉"}}
+            requests.post(f"{base_url}/comments", headers=headers, auth=auth, json=approve_comment_payload)
+            
+            response = requests.post(approve_url, auth=auth)
+            response.raise_for_status()
+            logger.info("✅ Successfully approved the Pull Request.")
+            
+        else:
+            logger.info(f"   - Found {len(all_issues)} issue(s). Posting comments.")
+            
+            requests.delete(approve_url, auth=auth)
+            logger.info("   - Ensured PR is not approved by this agent (removed approval if existed).")    
 
         _publish_without_cleanup(all_issues, files_with_issues, base_url, auth, headers)
 
