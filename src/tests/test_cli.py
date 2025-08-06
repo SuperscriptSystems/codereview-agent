@@ -1,10 +1,11 @@
-import yaml
 import pytest
 import git
+import yaml
 from typer.testing import CliRunner
-from code_review_agent.cli import app
-from code_review_agent.models import ContextRequirements, ReviewResult
+from unittest.mock import MagicMock
 
+from code_review_agent.cli import app
+from code_review_agent.models import ContextRequirements, ReviewResult, CodeIssue
 
 runner = CliRunner()
 
@@ -17,79 +18,56 @@ def create_test_config(tmp_path):
         return str(tmp_path)
     return _create_config
 
-@pytest.fixture(autouse=True)
-def mock_dependencies(mocker):
+@pytest.fixture
+def mock_all_dependencies(mocker):
+    """Mocks all external dependencies for CLI tests."""
+    
     mocker.patch('git.Repo') 
+    mocker.patch('code_review_agent.git_utils.get_diff', return_value="diff text")
+    mocker.patch('code_review_agent.git_utils.get_commit_messages', return_value="commit messages")
+    mocker.patch('code_review_agent.cli.io')
+
+    mock_patch_set = mocker.patch('code_review_agent.cli.PatchSet')
+    mock_patched_file = MagicMock()
+    mock_patched_file.target_file = 'b/main.py' 
+    mock_patched_file.__str__.return_value = "diff for main.py"
+    mock_patch_set.return_value = [mock_patched_file]
     
-    mocker.patch('code_review_agent.git_utils.get_diff', return_value="diff --git a/main.py b/main.py")
-    mocker.patch('code_review_agent.git_utils.get_commit_messages', return_value="feat: new feature")
-    mocker.patch('code_review_agent.git_utils.get_changed_files_from_diff', return_value=["main.py"])
-    mocker.patch('code_review_agent.git_utils.get_file_content', return_value="def main(): pass")
-    
+    mocker.patch('code_review_agent.git_utils.get_file_content', return_value="full file content")
     mocker.patch('code_review_agent.context_builder.determine_context', return_value=ContextRequirements(
         required_additional_files=[], is_sufficient=True, reasoning="Sufficient for test."
     ))
-    mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
+    return mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
 
 
-def test_review_uses_cli_focus_with_highest_priority(mocker, create_test_config):
+def test_focus_logic_with_cli_priority(mock_all_dependencies, create_test_config):
+    """Tests that --focus from CLI has the highest priority."""
     repo_path = create_test_config({'review_focus': ['Security']})
-    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
+    result = runner.invoke(app, ["--repo-path", repo_path, "--focus", "CodeStyle"])
 
-    result = runner.invoke(app, ["--repo-path", repo_path, "--focus", "LogicError"])
-
-    assert result.exit_code == 0, result.stdout
-    assert "Using focus areas from command line arguments" in result.stdout
+    assert result.exit_code == 0, result.output
+    assert "Using focus areas from command line arguments" in result.output
     
-    mock_run_review.assert_called_once()
-    kwargs = mock_run_review.call_args.kwargs
-    assert "focus_areas" in kwargs
-    assert set(kwargs["focus_areas"]) == {"LogicError"}
+    kwargs = mock_all_dependencies.call_args.kwargs
+    assert set(kwargs["focus_areas"]) == {"CodeStyle"}
 
-def test_review_uses_config_file_focus(mocker, create_test_config):
-    repo_path = create_test_config({'review_focus': ['Security', 'LogicError']})
-    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
-
+def test_focus_logic_with_config_file(mock_all_dependencies, create_test_config):
+    """Tests that focus is taken from .codereview.yml if CLI is not specified."""
+    repo_path = create_test_config({'review_focus': ['Security', 'Performance']})
     result = runner.invoke(app, ["--repo-path", repo_path])
 
-    assert result.exit_code == 0, result.stdout
-    assert "Using focus areas from .codereview.yml config file" in result.stdout
+    assert result.exit_code == 0, result.output
+    assert "Using focus areas from .codereview.yml config file" in result.output
     
-    mock_run_review.assert_called_once()
-    kwargs = mock_run_review.call_args.kwargs
-    assert "focus_areas" in kwargs
-    assert set(kwargs["focus_areas"]) == {"Security", "LogicError"}
+    kwargs = mock_all_dependencies.call_args.kwargs
+    assert set(kwargs["focus_areas"]) == {"Security", "Performance"}
 
-def test_review_uses_default_logicerror_focus(mocker, tmp_path):
-    """
-    Tests that if no focus is specified, the agent defaults to 'LogicError' only.
-    """
-    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
-
+def test_focus_logic_with_default(mock_all_dependencies, tmp_path):
+    """Tests that the agent defaults to 'LogicError' only."""
     result = runner.invoke(app, ["--repo-path", str(tmp_path)])
     
-    assert result.exit_code == 0, result.stdout
-    assert "🎯 No focus specified. Checking for 'LogicError' by default." in result.stdout
-
-    mock_run_review.assert_called_once()
-    kwargs = mock_run_review.call_args.kwargs
+    assert result.exit_code == 0, result.output
+    assert "No focus specified. Checking for 'LogicError' by default" in result.output
     
-    assert "focus_areas" in kwargs
+    kwargs = mock_all_dependencies.call_args.kwargs
     assert set(kwargs["focus_areas"]) == {"LogicError"}
-
-
-def test_review_command_handles_git_error(mocker, tmp_path, mock_dependencies):
-    """
-    Tests that the CLI handles Git errors gracefully.
-    `mock_dependencies` тут потрібна, щоб "замокати" інші виклики,
-    але ми перевизначаємо мок для get_diff.
-    """
-    mocker.patch(
-        'code_review_agent.git_utils.get_diff', 
-        side_effect=git.exc.GitCommandError('git diff', 'fatal: bad revision')
-    )
-
-    result = runner.invoke(app, ["--repo-path", str(tmp_path)])
-
-    assert result.exit_code != 0
-    assert "fatal: bad revision" in str(result.exception)

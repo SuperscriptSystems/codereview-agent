@@ -82,7 +82,7 @@ def run_review(
     custom_rules_instruction = ""
     if review_rules:
         rules_text = "\n- ".join(review_rules)
-        custom_rules_instruction = f"**Adhere to the following custom project rules:**\n- {rules_text}"
+        custom_rules_instruction = f"**CUSTOM RULES:**\n- {rules_text}"
 
 
     definitions_table = """
@@ -134,7 +134,7 @@ def run_review(
     - Each object in the array MUST have these keys: "line_number" (int), "issue_type" (str, one of the focused types), "comment" (str), and an optional "suggestion" (str).
     - **Crucial:** If you find absolutely no issues that match your focus and instructions, you MUST return an empty JSON array: `[]`. It is a valid and expected response.
     - Do not add any text, explanations, apologies, or markdown formatting like ```json.
-    - Before outputting, internally validate your response to ensure it is perfectly formed JSON. Pay special attention to escaping quotes (") and backslashes (\).
+    - Before outputting, internally validate your response to ensure it is perfectly formed JSON. Pay special attention to escaping quotes (") and backslashes (\\).
     """
 
     review_results = {}
