@@ -8,17 +8,16 @@ from collections import Counter
 logger = logging.getLogger(__name__)
 
 _client = None
-_bot_user = None
 
 def _get_github_client_and_user():
     """
     Initializes and returns the GitHub client and the bot's user info.
     Caches them for subsequent calls.
     """
-    global _client, _bot_user
-    if _client and _bot_user:
-        return _client, _bot_user
-            
+    global _client
+    if _client:
+        return _client
+
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         logger.error("GITHUB_TOKEN environment variable is not set.")
@@ -29,8 +28,7 @@ def _get_github_client_and_user():
         bot_user = client.get_user()
         logger.info(f"✅ Successfully authenticated to GitHub API as user: {bot_user.login}")
         _client = client
-        _bot_user = bot_user
-        return client, bot_user
+        return client
     except Exception as e:
         logger.error(f"❌ CRITICAL: Failed to authenticate with GitHub. Check GITHUB_TOKEN permissions. Error: {e}", exc_info=True)
         raise ValueError("GitHub authentication failed.")
@@ -50,8 +48,10 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
 
         logger.info("   - Searching for and deleting old bot comments...")
         
+        BOT_LOGIN = "github-actions[bot]"
+        
         review_comments = pr.get_review_comments()
-        bot_comments = [c for c in review_comments if c.user.id == bot_user.id]
+        bot_comments = [c for c in review_comments if c.user and c.user.login == BOT_LOGIN]
         
         logger.info(f"   - Found {len(bot_comments)} old comment(s) from this agent to delete.")
         for comment in bot_comments:
