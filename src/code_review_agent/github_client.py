@@ -8,32 +8,27 @@ from collections import Counter
 logger = logging.getLogger(__name__)
 
 _client = None
-_bot_user = None
 
-def _get_github_client_and_user():
+def _get_github_client():
     """
-    Initializes and returns the GitHub client and the bot's user info.
-    Caches them for subsequent calls.
+    Initializes and returns the GitHub client. No user info is fetched here.
     """
-    global _client, _bot_user
-    if _client and _bot_user:
-        return _client, _bot_user
+    global _client
+    if _client:
+        return _client
             
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         logger.error("GITHUB_TOKEN environment variable is not set.")
-        raise ValueError("GITHUB_TOKEN environment variable is not set.")
+        raise ValueError("GITHUB_TOKEN environment variable not set.")
     
     try:
-        client = Github(token)
-        bot_user = client.get_user()
-        logger.info(f"✅ Successfully authenticated to GitHub API as user: {bot_user.login}")
-        _client = client
-        _bot_user = bot_user
-        return client, bot_user
+        _client = Github(token)
+        logger.info("✅ GitHub client initialized successfully.")
+        return _client
     except Exception as e:
-        logger.error(f"❌ CRITICAL: Failed to authenticate with GitHub. Check GITHUB_TOKEN permissions. Error: {e}", exc_info=True)
-        raise ValueError("GitHub authentication failed.")
+        logger.error(f"❌ CRITICAL: Failed to initialize GitHub client. Error: {e}", exc_info=True)
+        raise ValueError("GitHub client initialization failed.")
 
 
 def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
@@ -41,20 +36,20 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
     Main entry point for GitHub. Cleans old comments, then posts new issues or approves the PR.
     """
     try:
-        client, bot_user = _get_github_client_and_user()
+        client = _get_github_client()
         repo_name = os.environ["GITHUB_REPOSITORY"]
         pr_number = int(os.environ["GITHUB_PR_NUMBER"])
         
         repo = client.get_repo(repo_name)
         pr = repo.get_pull(pr_number)
 
-        logger.info("   - Searching for and deleting old bot comments...")
+        logger.info("   - Searching for and deleting old review comments...")
         
         review_comments = pr.get_review_comments()
-        bot_comments = [c for c in review_comments if c.user.id == bot_user.id]
+        count_to_delete = review_comments.totalCount
         
-        logger.info(f"   - Found {len(bot_comments)} old comment(s) from this agent to delete.")
-        for comment in bot_comments:
+        logger.info(f"   - Found {count_to_delete} old review comment(s) to delete.")
+        for comment in review_comments:
             try:
                 comment.delete()
             except Exception as e:
@@ -99,6 +94,7 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
         raise e 
     except Exception as e:
         logger.error(f"❌ An error occurred during the GitHub publishing process: {e}", exc_info=True)
+        raise
 
 def _generate_summary_comment(all_issues: list[CodeIssue]) -> str:
     """Helper function to create the summary comment body."""
