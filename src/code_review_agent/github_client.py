@@ -1,6 +1,7 @@
 import os
 import logging
 from github import Github
+from github import GithubException
 from .models import CodeIssue
 from collections import Counter
 
@@ -91,6 +92,11 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
             )
             logger.info("✅ Successfully submitted a review with change requests.")
 
+    except GithubException as e:
+        logger.error("❌ A GitHub API error occurred during the publishing process!")
+        logger.error(f"   - Status: {e.status}")
+        logger.error(f"   - Details: {e.data}")
+        raise e 
     except Exception as e:
         logger.error(f"❌ An error occurred during the GitHub publishing process: {e}", exc_info=True)
 
