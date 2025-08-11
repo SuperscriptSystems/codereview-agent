@@ -19,7 +19,7 @@ def _get_github_client():
     if _client:
         return _client
             
-    token = os.environ.get("GITHUB_TOKEN")
+    token = os.environ.get("AGENT_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
         logger.error("GITHUB_TOKEN environment variable is not set.")
         raise ValueError("GITHUB_TOKEN environment variable not set.")
