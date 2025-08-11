@@ -245,7 +245,7 @@ def review(
     
     if is_github_pr:
         logging.info("🚀 Publishing results to GitHub PR...")
-        github_client.handle_pr_results(all_issues, files_with_issues, changed_files_map)
+        github_client.handle_pr_results(all_issues, files_with_issues)
 
     elif is_bitbucket_pr:
         logging.info("🚀 Publishing results to Bitbucket PR...")
