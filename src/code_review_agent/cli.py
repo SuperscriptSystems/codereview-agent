@@ -142,48 +142,25 @@ def review(
         logging.info("✅ No changed files detected to review.")
         raise typer.Exit()
 
-    logging.info("🧠 Performing smart import analysis to pre-populate context...")
-    
-    initial_dependencies = set()
-    for path, content in changed_files_content.items():
-        deps = git_utils.extract_dependencies_from_content(path, content)
-        if deps:
-            logging.info(f"   - Found potential dependencies in `{path}`: {deps}")
-            initial_dependencies.update(deps)
-
-
     final_context_content = dict(changed_files_content)
 
-    if initial_dependencies:
-        logging.info(f"🔎 Searching for files related to found dependencies: {list(initial_dependencies)}")
-        
-        found_dependency_files = git_utils.find_files_by_names(
-            repo_path,
-            list(initial_dependencies),
-            ignored_paths=filtering_config.get('ignored_paths', []),
-            ignored_extensions=filtering_config.get('ignored_extensions', [])
-        )
-        
-        new_files_to_add = [f for f in found_dependency_files if f not in final_context_content]
-
-        if new_files_to_add:
-            logging.info(f"➕ Automatically adding {len(new_files_to_add)} files to initial context: {new_files_to_add}")
-            for file_path in new_files_to_add:
-                final_context_content[file_path] = git_utils.get_file_content(repo_path, file_path)
-
+    full_project_structure = git_utils.get_file_structure(
+        repo_path,
+        filtering_config.get('ignored_paths', []),
+        filtering_config.get('ignored_extensions', [])
+    )
+    
     full_diff_for_context = "\n".join(changed_files_map.values())
 
     for i in range(max_iterations):
         logging.info(f"--- Context Building Iteration {i + 1}/{max_iterations} ---")
         
-        context_file_structure = git_utils.get_file_structure_from_paths(list(final_context_content.keys()))
-        
         context_req = context_builder.determine_context(
             diff=full_diff_for_context,
             commit_messages=commit_messages,
-            changed_files_content=changed_files_content, 
-            full_context_content=final_context_content,
-            file_structure=context_file_structure,
+            changed_files_content=changed_files_content,
+            full_context_content=final_context_content, 
+            file_structure=full_project_structure,
             current_context_files=list(final_context_content.keys()),
             llm_config=llm_config,
         )

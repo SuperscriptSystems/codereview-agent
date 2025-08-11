@@ -139,8 +139,7 @@ def get_file_structure_from_paths(paths: List[str]) -> str:
 
 def create_annotated_file(full_content: str, diff_content: str) -> str:
     """
-    Merges a full file content with its diff to create an annotated version where
-    every line of the full file is prefixed with '  ', '+ ', or '- '.
+    Merges a full file content with its diff to create an annotated version.
     """
     if not diff_content:
         return "\n".join([f"  {line}" for line in full_content.splitlines()])
@@ -150,44 +149,37 @@ def create_annotated_file(full_content: str, diff_content: str) -> str:
         if not patch: return full_content
 
         full_lines = full_content.splitlines()
-        
-        annotations = {}
-        hunks = list(patch[0])
 
-        line_map = {} 
-        new_line_idx = 0
-        for hunk in hunks:
-            for line in hunk:
-                if not line.is_removed:
-                    if line.source_line_no is not None:
-                        line_map[line.source_line_no] = new_line_idx
-                    new_line_idx += 1
-
-        for hunk in hunks:
+        annotations = []
+        for hunk in patch[0]:
             for line in hunk:
                 if line.is_added:
-                    annotations[line.target_line_no - 1] = ('+', line.value)
+                    annotations.append({'type': '+', 'new_lineno': line.target_line_no - 1, 'value': line.value})
                 elif line.is_removed:
-                    insert_pos = line.source_line_no
-                    while insert_pos not in line_map and insert_pos < (line.source_line_no + 40):
-                        insert_pos += 1
-                    
-                    target_insert_pos = line_map.get(insert_pos, line.source_line_no - 1)
-                    
-                    annotations.setdefault(target_insert_pos, []).append(('-', line.value))
-        
+                    annotations.append({'type': '-', 'old_lineno': line.source_line_no - 1, 'value': line.value})
+
+        annotations.sort(key=lambda x: x.get('new_lineno', x.get('old_lineno')))
+
         result_lines = []
-        for i, line_content in enumerate(full_lines):
-            if isinstance(annotations.get(i), list):
-                for change_type, value in annotations[i]:
-                    result_lines.append(f"{change_type} {value.strip()}")
+        original_line_idx = 0
+        
+        for change in annotations:
+            change_type = change['type']
+            lineno = change.get('new_lineno', change.get('old_lineno'))
             
-            if i in annotations and isinstance(annotations[i], tuple):
-                change_type, value = annotations[i]
-                result_lines.append(f"{change_type} {value.strip()}")
-            else:
-                result_lines.append(f"  {line_content}")
-                
+            while original_line_idx < lineno:
+                if original_line_idx < len(full_lines):
+                    result_lines.append(f"  {full_lines[original_line_idx]}")
+                original_line_idx += 1
+            
+            result_lines.append(f"{change_type} {change['value'].strip()}")
+            if change_type == '+':
+                original_line_idx += 1
+
+        while original_line_idx < len(full_lines):
+            result_lines.append(f"  {full_lines[original_line_idx]}")
+            original_line_idx += 1
+            
         return "\n".join(result_lines)
 
     except Exception as e:
