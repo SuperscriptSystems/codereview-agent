@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 _client = None
 
-def _get_github_client_and_user():
+def _get_github_client():
     """
     Initializes and returns the GitHub client and the bot's user info.
     Caches them for subsequent calls.
@@ -25,21 +25,19 @@ def _get_github_client_and_user():
     
     try:
         client = Github(token)
-        bot_user = client.get_user()
-        logger.info(f"✅ Successfully authenticated to GitHub API as user: {bot_user.login}")
         _client = client
         return client
     except Exception as e:
         logger.error(f"❌ CRITICAL: Failed to authenticate with GitHub. Check GITHUB_TOKEN permissions. Error: {e}", exc_info=True)
         raise ValueError("GitHub authentication failed.")
-
+    
 
 def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
     """
     Main entry point for GitHub. Cleans old comments, then posts new issues or approves the PR.
     """
     try:
-        client, bot_user = _get_github_client_and_user()
+        client = _get_github_client()
         repo_name = os.environ["GITHUB_REPOSITORY"]
         pr_number = int(os.environ["GITHUB_PR_NUMBER"])
         
