@@ -10,6 +10,7 @@ def determine_context(
     diff: str,
     commit_messages: str,
     changed_files_content: dict,
+    full_context_content: dict,
     file_structure: str,
     current_context_files: list,
     llm_config: dict,
@@ -29,20 +30,29 @@ def determine_context(
 
     changed_files_summary = "\n".join([f"- `{path}`" for path in changed_files_content.keys()])
     context_files_summary = "\n".join([f"- `{path}`" for path in current_context_files])
-    
+    full_context_text = "\n".join([
+    f"--- START FILE: {path} ---\n{content}\n--- END FILE: {path} ---"
+    for path, content in full_context_content.items()
+    ])
+
     user_prompt = f"""
     Analyze the following data and determine what other files are necessary for a complete review.
 
-    Commit Messages:
+    **Commit Messages:**
     ```
     {commit_messages}
     ```
     
-    Initially Changed Files:
+   **Initially Changed Files (Primary Focus):**
     ```
     {changed_files_summary}
     ```
 
+    **Full Content of All Files Currently in Context:**
+    ```
+    {full_context_text}
+    ```
+    
     Git Diff:
     ```diff
     {diff}

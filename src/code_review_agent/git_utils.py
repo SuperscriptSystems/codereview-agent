@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import git
 from unidiff import PatchSet
 import logging
@@ -138,57 +139,95 @@ def get_file_structure_from_paths(paths: List[str]) -> str:
 
 def create_annotated_file(full_content: str, diff_content: str) -> str:
     """
-    Merges a full file content with its diff to create an annotated version.
-    Lines unchanged are prefixed with '  ', added with '+ ', removed with '- '.
+    Merges a full file content with its diff to create an annotated version where
+    every line of the full file is prefixed with '  ', '+ ', or '- '.
     """
     if not diff_content:
-        return full_content
+        return "\n".join([f"  {line}" for line in full_content.splitlines()])
 
     try:
         patch = PatchSet(io.StringIO(diff_content))
-        
-        if not patch:
-            return full_content
+        if not patch: return full_content
 
-        patched_file = patch[0]
+        full_lines = full_content.splitlines()
         
-        annotated_lines = full_content.splitlines()
-        hunks = list(patched_file)
+        annotations = {}
+        hunks = list(patch[0])
 
-        changes = {}
+        line_map = {} 
+        new_line_idx = 0
         for hunk in hunks:
             for line in hunk:
-                line_type = line.line_type
-                if line_type == '+':
-                    changes[line.target_line_no - 1] = ('+', line.value)
-                elif line_type == '-':
-                    pass
+                if not line.is_removed:
+                    if line.source_line_no is not None:
+                        line_map[line.source_line_no] = new_line_idx
+                    new_line_idx += 1
 
         for hunk in hunks:
             for line in hunk:
-                if line.line_type == '-':
-                    insert_pos = line.target_line_no - 1
-                    while insert_pos in changes:
+                if line.is_added:
+                    annotations[line.target_line_no - 1] = ('+', line.value)
+                elif line.is_removed:
+                    insert_pos = line.source_line_no
+                    while insert_pos not in line_map and insert_pos < (line.source_line_no + 40):
                         insert_pos += 1
-                    changes[insert_pos] = ('-', line.value)
                     
-        result = []
-        original_line_idx = 0
-        final_line_idx = 0
+                    target_insert_pos = line_map.get(insert_pos, line.source_line_no - 1)
+                    
+                    annotations.setdefault(target_insert_pos, []).append(('-', line.value))
         
-        while original_line_idx < len(annotated_lines) or any(k >= final_line_idx for k in changes):
-            if final_line_idx in changes:
-                line_type, value = changes[final_line_idx]
-                result.append(f"{line_type} {value}")
-                if line_type != '-':
-                    original_line_idx += 1
+        result_lines = []
+        for i, line_content in enumerate(full_lines):
+            if isinstance(annotations.get(i), list):
+                for change_type, value in annotations[i]:
+                    result_lines.append(f"{change_type} {value.strip()}")
+            
+            if i in annotations and isinstance(annotations[i], tuple):
+                change_type, value = annotations[i]
+                result_lines.append(f"{change_type} {value.strip()}")
             else:
-                if original_line_idx < len(annotated_lines):
-                    result.append(f"  {annotated_lines[original_line_idx]}")
-                    original_line_idx += 1
-            final_line_idx += 1
+                result_lines.append(f"  {line_content}")
+                
+        return "\n".join(result_lines)
 
-        return "\n".join(result)
-
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error creating annotated file: {e}", exc_info=True)
         return f"--- FULL FILE CONTENT ---\n{full_content}\n\n--- GIT DIFF ---\n{diff_content}"
+    
+
+def extract_dependencies_from_content(file_path: str, file_content: str) -> List[str]:
+    """
+    Extracts potential module/file dependencies from the content of a file
+    based on its extension, using regular expressions.
+
+    Returns a list of potential filenames or module names to search for.
+    """
+    dependencies = set()
+    file_extension = os.path.splitext(file_path)[1]
+    patterns = {
+        '.cs': [
+            re.compile(r'^\s*using\s+([\w\.]+);'),
+            re.compile(r'(?:class|record|interface)\s+\w+\s*:\s*([^\{]+)') 
+        ],
+        '.py': [
+            re.compile(r'^\s*import\s+([\w\.]+)'),
+            re.compile(r'^\s*from\s+([\w\.]+)\s+import')
+        ],
+        '.js': [re.compile(r'from\s+[\'"]([^\'"]+)[\'"]')],
+        '.ts': [re.compile(r'from\s+[\'"]([^\'"]+)[\'"]')],
+        '.tsx': [re.compile(r'from\s+[\'"]([^\'"]+)[\'"]')],
+    }
+
+    if file_extension in patterns:
+        for line in file_content.splitlines():
+            for pattern in patterns[file_extension]:
+                match = pattern.search(line)
+                if match:
+                    matched_string = match.group(1)
+                    potential_deps = [d.strip() for d in matched_string.split(',')]
+                    for dep in potential_deps:
+                        clean_dep = os.path.basename(dep.replace('.', '/')).split('<')[0]
+                        if clean_dep:
+                            dependencies.add(clean_dep)
+
+    return list(dependencies)
