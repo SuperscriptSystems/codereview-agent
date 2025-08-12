@@ -99,7 +99,12 @@ def run_review(
     """    
 
     system_prompt = f"""
-    You are an expert AI code review assistant. Your task is to analyze the provided file content, where changed lines are marked with `+` (added) or `-` (removed), and provide feedback as a clean JSON array.
+    You are an expert AI code review assistant. You will be given an annotated file where each line is prefixed with its old and new line number, a change marker (`+`, `-`, or space), and provide feedback as a clean JSON array.
+
+    **Example Input Line Format:**
+    `[old_lineno] [new_lineno] [marker] [code]`
+    `   150               - await busPublisher.PublishAsync(new AudienceDeletedBusEvent(audienceId));`
+    `         152         + await busPublisher.PublishAsync(new AudienceDeletedBusEvent(audienceId, originalName));`
 
     **--- BEHAVIORAL RULES (MOST IMPORTANT) ---**
     1.  **Be Helpful, Not Annoying:** Be friendly and assume you might be wrong. Your goal is to help, not to criticize.

@@ -139,48 +139,27 @@ def get_file_structure_from_paths(paths: List[str]) -> str:
 
 def create_annotated_file(full_content: str, diff_content: str) -> str:
     """
-    Merges a full file content with its diff to create an annotated version.
+    Creates an annotated file content where each line is prefixed with its
+    old and new line number, change type ('+', '-', ' '), and the code.
+    This provides a rich, unambiguous context for the LLM.
     """
     if not diff_content:
-        return "\n".join([f"  {line}" for line in full_content.splitlines()])
+        return "\n".join([f"{i+1:4d} {i+1:4d}   {line}" for i, line in enumerate(full_content.splitlines())])
 
     try:
         patch = PatchSet(io.StringIO(diff_content))
         if not patch: return full_content
-
-        full_lines = full_content.splitlines()
-
-        annotations = []
-        for hunk in patch[0]:
-            for line in hunk:
-                if line.is_added:
-                    annotations.append({'type': '+', 'new_lineno': line.target_line_no - 1, 'value': line.value})
-                elif line.is_removed:
-                    annotations.append({'type': '-', 'old_lineno': line.source_line_no - 1, 'value': line.value})
-
-        annotations.sort(key=lambda x: x.get('new_lineno', x.get('old_lineno')))
-
-        result_lines = []
-        original_line_idx = 0
         
-        for change in annotations:
-            change_type = change['type']
-            lineno = change.get('new_lineno', change.get('old_lineno'))
-            
-            while original_line_idx < lineno:
-                if original_line_idx < len(full_lines):
-                    result_lines.append(f"  {full_lines[original_line_idx]}")
-                original_line_idx += 1
-            
-            result_lines.append(f"{change_type} {change['value'].strip()}")
-            if change_type == '+':
-                original_line_idx += 1
-
-        while original_line_idx < len(full_lines):
-            result_lines.append(f"  {full_lines[original_line_idx]}")
-            original_line_idx += 1
-            
-        return "\n".join(result_lines)
+        annotated_lines = []
+        for patched_file in patch:
+            for hunk in patched_file:
+                for line in hunk:
+                    old_lineno_str = str(line.source_line_no) if line.source_line_no else ''
+                    new_lineno_str = str(line.target_line_no) if line.target_line_no else ''
+                    
+                    annotated_lines.append(f"{old_lineno_str:>4} {new_lineno_str:>4} {line.line_type}{line.value.rstrip()}")
+        
+        return "\n".join(annotated_lines)
 
     except Exception as e:
         logger.error(f"Error creating annotated file: {e}", exc_info=True)
