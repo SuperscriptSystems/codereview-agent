@@ -34,8 +34,9 @@ def _get_github_client():
 
 def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
     """
-    Main entry point for GitHub. Cleans old inline comments, updates the summary,
-    and posts new results as a single review.
+    Main entry point for GitHub. Cleans old comments, then posts new results.
+    - Deletes old, UNANSWERED inline comments.
+    - Deletes ALL old summary comments.
     """
     try:
         client = _get_github_client()
@@ -47,18 +48,67 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
         
         BOT_LOGIN = "github-actions[bot]"
 
-        _cleanup_unanswered_inline_comments(pr, BOT_LOGIN)
-        
-        summary_body = _generate_summary_comment(all_issues)
-        _update_or_create_summary_comment(pr, summary_body, BOT_LOGIN)
+        _cleanup_comments(pr, BOT_LOGIN)
 
         if all_issues:
-            _post_review_with_issues(pr, files_with_issues)
+            logger.info(f"   - Found {len(all_issues)} issue(s). Submitting a new review.")
+            _post_review_with_issues(pr, all_issues, files_with_issues)
         else:
-            _approve_pr(pr, BOT_LOGIN)
-            
+            logger.info("✅ No issues found. Leaving an approval comment.")
+            _dismiss_previous_reviews(pr, BOT_LOGIN)
+            pr.create_issue_comment("Excellent work! The AI agent didn't find any issues. 👍")
+
     except Exception as e:
         logger.error(f"❌ An error occurred during the GitHub publishing process: {e}", exc_info=True)
+
+def _cleanup_comments(pr, bot_login: str):
+    """
+    Cleans up old comments:
+    - Deletes unanswered inline comments.
+    - Deletes ALL summary comments from the bot.
+    """
+    logger.info(f"--- Cleaning up comments from bot: {bot_login} ---")
+    
+    review_comments = pr.get_review_comments()
+    parent_comment_ids = {c.in_reply_to_id for c in review_comments if c.in_reply_to_id}
+            
+    bot_inline_comments_to_delete = [
+        c for c in review_comments 
+        if c.user and c.user.login == bot_login and c.id not in parent_comment_ids
+    ]
+    
+    logger.info(f"   - Found {len(bot_inline_comments_to_delete)} unanswered inline comment(s) to delete.")
+    for comment in bot_inline_comments_to_delete:
+        try:
+            comment.delete()
+        except Exception as e:
+            logger.warning(f"   - Could not delete inline comment {comment.id}: {e}")
+    
+    issue_comments = pr.get_issue_comments()
+    bot_summary_comments_to_delete = [
+        c for c in issue_comments
+        if c.user and c.user.login == bot_login
+    ]
+    
+    logger.info(f"   - Found {len(bot_summary_comments_to_delete)} summary/approval comment(s) to delete.")
+    for comment in bot_summary_comments_to_delete:
+        try:
+            comment.delete()
+        except Exception as e:
+            logger.warning(f"   - Could not delete summary comment {comment.id}: {e}")
+            
+    logger.info("--- Cleanup complete ---")
+
+def _dismiss_previous_reviews(pr, bot_login: str):
+    """Finds and dismisses any previous reviews from the bot that requested changes."""
+    for review in pr.get_reviews():
+        if review.user and review.user.login == bot_login and review.state == 'CHANGES_REQUESTED':
+            try:
+                review.dismiss("All previous issues appear to be addressed.")
+                logger.info(f"   - Dismissed previous 'CHANGES_REQUESTED' review (ID: {review.id}).")
+            except Exception as e:
+                logger.warning(f"   - Could not dismiss review {review.id}: {e}")
+
 
 def _generate_summary_comment(all_issues: list[CodeIssue]) -> str:
     """Helper function to create the summary comment body."""
@@ -71,66 +121,13 @@ def _generate_summary_comment(all_issues: list[CodeIssue]) -> str:
         for issue_type, count in issue_counts.items():
             summary_body += f"* **{issue_type}:** {count} issue(s)\n"
     summary_body += "\n---\n*Please see the detailed inline comments below.*"
-    return summary_body
+    return summary_body    
 
-
-def _cleanup_unanswered_inline_comments(pr, bot_login: str):
-    """Finds and deletes all previous, UNANSWERED inline comments made by the bot."""
-    logger.info(f"--- Cleaning up unanswered inline comments from bot: {bot_login} ---")
-    
-    review_comments = pr.get_review_comments()
-    parent_comment_ids = {c.in_reply_to_id for c in review_comments if c.in_reply_to_id}
-            
-    bot_comments_to_delete = [
-        c for c in review_comments 
-        if c.user and c.user.login == bot_login and c.id not in parent_comment_ids
-    ]
-    
-    logger.info(f"   - Found {len(bot_comments_to_delete)} unanswered inline comment(s) to delete.")
-    for comment in bot_comments_to_delete:
-        try:
-            comment.delete()
-        except Exception as e:
-            logger.warning(f"   - Could not delete inline comment {comment.id}: {e}")
-
-
-def _update_or_create_summary_comment(pr, body: str, bot_login: str):
-    """Finds an old summary comment and edits it, or creates a new one."""
-    summary_comment = None
-    for comment in pr.get_issue_comments():
-        if comment.user and comment.user.login == bot_login and "AI Code Review Summary" in comment.body:
-            summary_comment = comment
-            break
-    
-    if summary_comment:
-        logger.info(f"   - Found existing summary comment (ID: {summary_comment.id}). Updating it.")
-        summary_comment.edit(body)
-    else:
-        logger.info("   - No existing summary comment found. Creating a new one.")
-        pr.create_issue_comment(body)            
-
-
-def _approve_pr(pr, bot_login: str):
-    """Approves the PR if no issues are found, dismissing any previous change requests from the bot."""
-    logger.info("✅ No issues found. Approving the PR.")
-    
-    for review in pr.get_reviews():
-        if review.user and review.user.login == bot_login and review.state == 'CHANGES_REQUESTED':
-            try:
-                review.dismiss("All issues addressed.")
-                logger.info(f"   - Dismissed previous review (ID: {review.id}).")
-            except Exception as e:
-                logger.warning(f"   - Could not dismiss review {review.id}: {e}")
-    
-    pr.create_review(event="APPROVE")
-    logger.info("✅ Successfully approved the Pull Request.")        
-
-
-def _post_review_with_issues(pr, files_with_issues: dict):
-    """Posts all new issues as a single review with 'REQUEST_CHANGES' status."""
-    logger.info(f"   - Submitting a review with {len(files_with_issues)} file(s) containing issues.")
-    comments_for_review = []
+def _post_review_with_issues(pr, all_issues: list[CodeIssue], files_with_issues: dict):
+    """Posts all new issues and a summary comment as a single review."""
     latest_commit = pr.get_commits().reversed[0]
+    
+    comments_for_review = []
     for file_path, issues in files_with_issues.items():
         for issue in issues:
             comment_body = f"**[{issue.issue_type}]**\n\n{issue.comment}"
@@ -140,13 +137,17 @@ def _post_review_with_issues(pr, files_with_issues: dict):
                 "path": file_path, "line": issue.line_number, "body": comment_body, "side": "RIGHT"
             })
 
-    try:
-        pr.create_review(
-            commit=latest_commit,
-            event="REQUEST_CHANGES",
-            comments=comments_for_review
-        )
-        logger.info("✅ Successfully submitted a review with change requests.")
-    except GithubException as e:
-        if "comments must be a list of at most" not in str(e.data):
-            raise
+    summary_body = _generate_summary_comment(all_issues)
+    
+    pr.create_issue_comment(summary_body)
+    
+
+    MAX_COMMENTS_PER_REQUEST = 30
+    for i in range(0, len(comments_for_review), MAX_COMMENTS_PER_REQUEST):
+        chunk = comments_for_review[i:i + MAX_COMMENTS_PER_REQUEST]
+        pr.create_review(commit=latest_commit, comments=chunk, event="COMMENT")
+
+    if all_issues:
+        pr.create_review(event="REQUEST_CHANGES")
+
+    logger.info("✅ Successfully submitted review.")
