@@ -49,14 +49,24 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
         BOT_LOGIN = "github-actions[bot]"
         
         review_comments = pr.get_review_comments()
-        bot_comments = [c for c in review_comments if c.user and c.user.login == BOT_LOGIN]
+        for comment in review_comments:
+            if comment.user and comment.user.login == BOT_LOGIN:
+                try:
+                    comment.delete()
+                    logger.info(f"   - Deleted old inline comment (ID: {comment.id})")
+                except Exception as e:
+                    logger.warning(f"   - Could not delete inline comment {comment.id}: {e}")
         
-        logger.info(f"   - Found {len(bot_comments)} old comment(s) from this agent to delete.")
-        for comment in bot_comments:
-            try:
-                comment.delete()
-            except Exception as e:
-                logger.warning(f"   - Could not delete comment {comment.id}: {e}")
+        issue_comments = pr.get_issue_comments()
+        for comment in issue_comments:
+            if comment.user and comment.user.login == BOT_LOGIN and "AI Code Review Summary" in comment.body:
+                try:
+                    comment.delete()
+                    logger.info(f"   - Deleted old summary comment (ID: {comment.id})")
+                except Exception as e:
+                    logger.warning(f"   - Could not delete summary comment {comment.id}: {e}")
+        
+        logger.info(f"Cleanup complete")
         
         if not all_issues:
             logger.info("✅ No issues found. Posting approval comment and approving PR.")
@@ -77,17 +87,24 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
                     comments_for_review.append({
                         "path": file_path,
                         "line": issue.line_number,
-                        "body": comment_body
+                        "body": comment_body,
+                        "side": "RIGHT"
                     })
 
             summary_body = _generate_summary_comment(all_issues)
             
-            pr.create_review(
-                commit=latest_commit,
-                body=summary_body,
-                event="REQUEST_CHANGES",
-                comments=comments_for_review
-            )
+            MAX_COMMENTS_PER_REVIEW = 30
+            for i in range(0, len(comments_for_review), MAX_COMMENTS_PER_REVIEW):
+                chunk = comments_for_review[i:i + MAX_COMMENTS_PER_REVIEW]
+                
+                current_body = summary_body if i == 0 else ""
+                
+                pr.create_review(
+                    commit=latest_commit,
+                    body=current_body,
+                    event="REQUEST_CHANGES",
+                    comments=chunk
+                )
             logger.info("✅ Successfully submitted a review with change requests.")
 
     except GithubException as e:
