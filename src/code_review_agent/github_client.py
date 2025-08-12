@@ -34,7 +34,8 @@ def _get_github_client():
 
 def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
     """
-    Main entry point for GitHub. Cleans old comments, then posts new issues or approves the PR.
+    Main entry point for GitHub. Cleans old inline comments, updates the summary,
+    and posts new results as a single review.
     """
     try:
         client = _get_github_client()
@@ -43,57 +44,19 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
         
         repo = client.get_repo(repo_name)
         pr = repo.get_pull(pr_number)
-
-        logger.info("   - Searching for and deleting old bot comments...")
         
         BOT_LOGIN = "github-actions[bot]"
+
+        _cleanup_unanswered_inline_comments(pr, BOT_LOGIN)
         
-        _cleanup_unanswered_comments(pr, BOT_LOGIN)
-        
-        if not all_issues:
-            logger.info("✅ No issues found. Posting approval comment and approving PR.")
-            pr.create_issue_comment("Excellent work! The AI agent didn't find any issues. Keep up the great contributions! 🎉")
-            pr.create_review(event="APPROVE")
-            logger.info("✅ Successfully approved the Pull Request.")
+        summary_body = _generate_summary_comment(all_issues)
+        _update_or_create_summary_comment(pr, summary_body, BOT_LOGIN)
+
+        if all_issues:
+            _post_review_with_issues(pr, files_with_issues)
         else:
-            logger.info(f"   - Found {len(all_issues)} issue(s). Submitting a review with change requests.")
+            _approve_pr(pr, BOT_LOGIN)
             
-            comments_for_review = []
-            latest_commit = pr.get_commits().reversed[0]
-            for file_path, issues in files_with_issues.items():
-                for issue in issues:
-                    comment_body = f"**[{issue.issue_type}]**\n\n{issue.comment}"
-                    if issue.suggestion:
-                        comment_body += f"\n```suggestion\n{issue.suggestion}\n```"
-                    
-                    comments_for_review.append({
-                        "path": file_path,
-                        "line": issue.line_number,
-                        "body": comment_body,
-                        "side": "RIGHT"
-                    })
-
-            summary_body = _generate_summary_comment(all_issues)
-            
-            MAX_COMMENTS_PER_REVIEW = 30
-            for i in range(0, len(comments_for_review), MAX_COMMENTS_PER_REVIEW):
-                chunk = comments_for_review[i:i + MAX_COMMENTS_PER_REVIEW]
-                
-                current_body = summary_body if i == 0 else ""
-                
-                pr.create_review(
-                    commit=latest_commit,
-                    body=current_body,
-                    event="REQUEST_CHANGES",
-                    comments=chunk
-                )
-            logger.info("✅ Successfully submitted a review with change requests.")
-
-    except GithubException as e:
-        logger.error("❌ A GitHub API error occurred during the publishing process!")
-        logger.error(f"   - Status: {e.status}")
-        logger.error(f"   - Details: {e.data}")
-        raise e 
     except Exception as e:
         logger.error(f"❌ An error occurred during the GitHub publishing process: {e}", exc_info=True)
 
@@ -111,21 +74,17 @@ def _generate_summary_comment(all_issues: list[CodeIssue]) -> str:
     return summary_body
 
 
-def _cleanup_unanswered_comments(pr, bot_login: str):
-    """Finds and deletes all previous, UNANSWERED comments made by the bot."""
-    logger.info(f"--- Searching for and deleting old, unanswered comments from bot: {bot_login} ---")
+def _cleanup_unanswered_inline_comments(pr, bot_login: str):
+    """Finds and deletes all previous, UNANSWERED inline comments made by the bot."""
+    logger.info(f"--- Cleaning up unanswered inline comments from bot: {bot_login} ---")
     
-    parent_comment_ids = set()
     review_comments = pr.get_review_comments()
-    for comment in review_comments:
-        if comment.in_reply_to_id:
-            parent_comment_ids.add(comment.in_reply_to_id)
+    parent_comment_ids = {c.in_reply_to_id for c in review_comments if c.in_reply_to_id}
             
-    bot_comments_to_delete = []
-    for comment in review_comments:
-        if comment.user and comment.user.login == bot_login:
-            if comment.id not in parent_comment_ids:
-                bot_comments_to_delete.append(comment)
+    bot_comments_to_delete = [
+        c for c in review_comments 
+        if c.user and c.user.login == bot_login and c.id not in parent_comment_ids
+    ]
     
     logger.info(f"   - Found {len(bot_comments_to_delete)} unanswered inline comment(s) to delete.")
     for comment in bot_comments_to_delete:
@@ -134,13 +93,60 @@ def _cleanup_unanswered_comments(pr, bot_login: str):
         except Exception as e:
             logger.warning(f"   - Could not delete inline comment {comment.id}: {e}")
 
-    issue_comments = pr.get_issue_comments()
-    for comment in issue_comments:
+
+def _update_or_create_summary_comment(pr, body: str, bot_login: str):
+    """Finds an old summary comment and edits it, or creates a new one."""
+    summary_comment = None
+    for comment in pr.get_issue_comments():
         if comment.user and comment.user.login == bot_login and "AI Code Review Summary" in comment.body:
-            try:
-                comment.delete()
-                logger.info(f"   - Deleted old summary comment (ID: {comment.id}).")
-            except Exception as e:
-                logger.warning(f"   - Could not delete summary comment {comment.id}: {e}")
+            summary_comment = comment
+            break
     
-    logger.info("Cleanup complete")
+    if summary_comment:
+        logger.info(f"   - Found existing summary comment (ID: {summary_comment.id}). Updating it.")
+        summary_comment.edit(body)
+    else:
+        logger.info("   - No existing summary comment found. Creating a new one.")
+        pr.create_issue_comment(body)            
+
+
+def _approve_pr(pr, bot_login: str):
+    """Approves the PR if no issues are found, dismissing any previous change requests from the bot."""
+    logger.info("✅ No issues found. Approving the PR.")
+    
+    for review in pr.get_reviews():
+        if review.user and review.user.login == bot_login and review.state == 'CHANGES_REQUESTED':
+            try:
+                review.dismiss("All issues addressed.")
+                logger.info(f"   - Dismissed previous review (ID: {review.id}).")
+            except Exception as e:
+                logger.warning(f"   - Could not dismiss review {review.id}: {e}")
+    
+    pr.create_review(event="APPROVE")
+    logger.info("✅ Successfully approved the Pull Request.")        
+
+
+def _post_review_with_issues(pr, files_with_issues: dict):
+    """Posts all new issues as a single review with 'REQUEST_CHANGES' status."""
+    logger.info(f"   - Submitting a review with {len(files_with_issues)} file(s) containing issues.")
+    comments_for_review = []
+    latest_commit = pr.get_commits().reversed[0]
+    for file_path, issues in files_with_issues.items():
+        for issue in issues:
+            comment_body = f"**[{issue.issue_type}]**\n\n{issue.comment}"
+            if issue.suggestion:
+                comment_body += f"\n```suggestion\n{issue.suggestion}\n```"
+            comments_for_review.append({
+                "path": file_path, "line": issue.line_number, "body": comment_body, "side": "RIGHT"
+            })
+
+    try:
+        pr.create_review(
+            commit=latest_commit,
+            event="REQUEST_CHANGES",
+            comments=comments_for_review
+        )
+        logger.info("✅ Successfully submitted a review with change requests.")
+    except GithubException as e:
+        if "comments must be a list of at most" not in str(e.data):
+            raise
