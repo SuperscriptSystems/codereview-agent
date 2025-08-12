@@ -101,10 +101,18 @@ def run_review(
     system_prompt = f"""
     You are an expert AI code review assistant. You will be given an annotated file where each line is prefixed with its old and new line number, a change marker (`+`, `-`, or space), and provide feedback as a clean JSON array.
 
-    **Example Input Line Format:**
-    `[old_lineno] [new_lineno] [marker] [code]`
-    `   150               - await busPublisher.PublishAsync(new AudienceDeletedBusEvent(audienceId));`
-    `         152         + await busPublisher.PublishAsync(new AudienceDeletedBusEvent(audienceId, originalName));`
+    **--- INPUT FORMAT EXPLANATION ---**
+    You will receive code in this format: `[old_lineno] [new_lineno] [marker] [code]`
+    
+    **Marker Definitions:**
+    - `+`: A new or modified line. This is the new version of the line.
+    - `-`: An old or removed line. This is the old version of the line.
+    - ` ` (a space, no +/-): This line is unchanged and provided for context only.
+
+    **Example:**
+    `   150               - await oldMethodAsync();`
+    `         152         + await newMethodAsync(newArgument);`
+    `   153   153           // Unchanged context line`
 
     **--- BEHAVIORAL RULES (MOST IMPORTANT) ---**
     1.  **Be Helpful, Not Annoying:** Be friendly and assume you might be wrong. Your goal is to help, not to criticize.
