@@ -48,25 +48,7 @@ def handle_pr_results(all_issues: list[CodeIssue], files_with_issues: dict):
         
         BOT_LOGIN = "github-actions[bot]"
         
-        review_comments = pr.get_review_comments()
-        for comment in review_comments:
-            if comment.user and comment.user.login == BOT_LOGIN:
-                try:
-                    comment.delete()
-                    logger.info(f"   - Deleted old inline comment (ID: {comment.id})")
-                except Exception as e:
-                    logger.warning(f"   - Could not delete inline comment {comment.id}: {e}")
-        
-        issue_comments = pr.get_issue_comments()
-        for comment in issue_comments:
-            if comment.user and comment.user.login == BOT_LOGIN and "AI Code Review Summary" in comment.body:
-                try:
-                    comment.delete()
-                    logger.info(f"   - Deleted old summary comment (ID: {comment.id})")
-                except Exception as e:
-                    logger.warning(f"   - Could not delete summary comment {comment.id}: {e}")
-        
-        logger.info(f"Cleanup complete")
+        _cleanup_unanswered_comments(pr, BOT_LOGIN)
         
         if not all_issues:
             logger.info("✅ No issues found. Posting approval comment and approving PR.")
@@ -127,3 +109,38 @@ def _generate_summary_comment(all_issues: list[CodeIssue]) -> str:
             summary_body += f"* **{issue_type}:** {count} issue(s)\n"
     summary_body += "\n---\n*Please see the detailed inline comments below.*"
     return summary_body
+
+
+def _cleanup_unanswered_comments(pr, bot_login: str):
+    """Finds and deletes all previous, UNANSWERED comments made by the bot."""
+    logger.info(f"--- Searching for and deleting old, unanswered comments from bot: {bot_login} ---")
+    
+    parent_comment_ids = set()
+    review_comments = pr.get_review_comments()
+    for comment in review_comments:
+        if comment.in_reply_to_id:
+            parent_comment_ids.add(comment.in_reply_to_id)
+            
+    bot_comments_to_delete = []
+    for comment in review_comments:
+        if comment.user and comment.user.login == bot_login:
+            if comment.id not in parent_comment_ids:
+                bot_comments_to_delete.append(comment)
+    
+    logger.info(f"   - Found {len(bot_comments_to_delete)} unanswered inline comment(s) to delete.")
+    for comment in bot_comments_to_delete:
+        try:
+            comment.delete()
+        except Exception as e:
+            logger.warning(f"   - Could not delete inline comment {comment.id}: {e}")
+
+    issue_comments = pr.get_issue_comments()
+    for comment in issue_comments:
+        if comment.user and comment.user.login == bot_login and "AI Code Review Summary" in comment.body:
+            try:
+                comment.delete()
+                logger.info(f"   - Deleted old summary comment (ID: {comment.id}).")
+            except Exception as e:
+                logger.warning(f"   - Could not delete summary comment {comment.id}: {e}")
+    
+    logger.info("Cleanup complete")
