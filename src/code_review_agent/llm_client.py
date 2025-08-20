@@ -13,10 +13,12 @@ def get_client(llm_config: Dict[str, any]):
     """
     load_dotenv(override=True)
     
-    provider = llm_config.get("provider", "openrouter")
+    provider = llm_config.get("provider", "openai")
     base_url = llm_config.get("base_url")
     if provider == "openrouter" and not base_url:
         base_url = "https://openrouter.ai/api/v1"
+    if provider == "openai" and not base_url:
+       base_url = "https://api.openai.com/v1"
     
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
