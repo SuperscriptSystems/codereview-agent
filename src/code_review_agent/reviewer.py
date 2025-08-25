@@ -131,19 +131,16 @@ def run_review(
 
     
     **--- CRITICAL RULES ---**
-    1.  **SCOPE:** Your comments and `line_number` MUST correspond to lines marked with `+` or `-`. DO NOT comment on unchanged 
-    2.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**. If you find issues of other types, you MUST ignore them.
-    3.  **EVIDENCE REQUIRED (NO SPECULATION):** This is your most important rule. You are strictly forbidden from reporting potential issues based on speculation about other parts of the codebase.
-        -   **Interface/Signature Changes:** If a public method signature or an interface changes, you MUST NOT report this as an issue unless you have **direct evidence** within the provided annotated file that this change breaks an existing implementation or call.
-        -   **Example of what NOT to do:** Do not say "Changing this interface might break other implementations". This is speculation.
-        -   If you have no direct evidence of a bug, you **MUST** ignore the potential issue.
-    4.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Do not report on potential, hypothetical, or future issues. For example, do not suggest adding a feature that is "out of scope" for the current changes. Your feedback should be actionable for the developer **right now**.
-    5.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
-        -   If a fix involves changing one or more lines, you MUST provide the complete, corrected line(s) of code in the `suggestion` field as a drop-in replacement.
-        -   The `suggestion` field should contain **code, not text**, unless a code fix is impossible (e.g., "add a missing unit test").
-    6.  **AVOID REDUNDANT SUGGESTIONS:** Before making a suggestion, you MUST check if the existing code already implements the best practice you are recommending. **DO NOT suggest a change that is identical to the existing code.** Your feedback must provide new, valuable information.
-    7.  **RESPECT GUARD CLAUSES:** Before reporting a potential `NullReferenceException` or similar error, you MUST check the preceding lines for "guard clauses" or null checks (e.g., `if (myObject == null) return;` or `if (myObject != null) { ... }`). If the potentially problematic code is inside a block that correctly checks for null, you MUST NOT report it as an issue.    
-    8.  {custom_rules_instruction}
+    **--- CRITICAL RULES ---**
+    1.  **Modification Analysis:** When you see a `-` line followed by a `+` line, you MUST treat this as a **modification**. Your primary task is to determine if the new version (`+` line) is a correct and good replacement for the old version (`-` line). **DO NOT suggest the `+` line as a fix for the `-` line**, as the change has already been made. Instead, check if the new `+` line itself has any flaws.
+    2.  **SCOPE:** Your comments and `line_number` MUST correspond to the **new line number** of lines marked with `+`. DO NOT comment on unchanged or removed (`-`) lines.
+    3.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**.
+    4.  **EVIDENCE REQUIRED (NO SPECULATION):** You are strictly forbidden from reporting potential issues based on speculation. If a change to an interface *could* cause a problem, but you have no direct evidence of that problem in the provided context, you MUST ignore it.
+    5.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Your feedback must be actionable for the developer **right now**.
+    6.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
+    7.  **AVOID REDUNDANT SUGGESTIONS:** DO NOT suggest a change that is identical to the existing code.
+    8.  **RESPECT GUARD CLAUSES:** If code is inside a `if (obj != null)` block, DO NOT report a potential `NullReferenceException`.
+    9.  {custom_rules_instruction}
 
 
     **--- OUTPUT FORMAT ---**

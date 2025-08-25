@@ -12,7 +12,49 @@ from . import bitbucket_client, github_client
 from . import git_utils, context_builder, reviewer
 from .models import IssueType, CodeIssue
 
+def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str]]:
+    """
+    Groups changed files into priority tiers.
+    Tier 1: Interfaces, DTOs, Core business logic.
+    Tier 2: Controllers, UI components.
+    Tier 3: Configs, styles, docs.
+    """
+    tier1, tier2, tier3 = [], [], []
+    for path in changed_files_map.keys():
+        path_lower = path.lower()
+        
+        if any(k in path_lower for k in ['interface', 'dto', 'model', 'service', 'core', 'abstraction']):
+            tier1.append(path)
+        elif any(k in path_lower for k in ['controller', 'component', 'page']):
+            tier2.append(path)
+        else:
+            tier3.append(path)
+    return [tier1, tier2, tier3]
 
+
+def filter_test_files(
+    changed_files_map: Dict[str, str], 
+    test_keywords: List[str]
+) -> Dict[str, str]:
+    """
+    Filters out test files from the map of changed files.
+    """
+    logging.info("🔬 Filtering out test files from the review scope...")
+    
+    files_for_review_map = {}
+    for path, diff in changed_files_map.items():
+        is_test_file = any(
+            keyword in part.lower() 
+            for keyword in test_keywords 
+            for part in os.path.normpath(path).split(os.sep)
+        )
+        
+        if not is_test_file:
+            files_for_review_map[path] = diff
+        else:
+            logging.info(f"   - Ignoring test file based on keywords: {path}")
+            
+    return files_for_review_map
 
 app = typer.Typer(add_completion=False)
 
@@ -21,7 +63,7 @@ def setup_logging(trace_mode: bool):
     """Configures logging for the application."""
     log_level = logging.DEBUG if trace_mode else logging.INFO
     
-    log_format = '%(asctime)s - %(levelname)s - [%(name)s] - %(message)s' if trace_mode else '%(message)s'
+    log_format = '%(asctime)s - %(levelname)s - [%(name)s] - %(message)s' if trace_mode else '%(message)s'    
     
     logging.basicConfig(
         level=log_level,
@@ -84,7 +126,6 @@ def review(
 
     config = load_config(repo_path)
     # enough 3 iteration to ensure 95% results and prevent cyclicality for all LLMs
-    max_iterations = config.get('max_context_iterations', 3)
     max_context_files = config.get('max_context_files', 25)
     llm_config = config.get('llm', {})
     filtering_config = config.get('filtering', {})
@@ -141,59 +182,71 @@ def review(
     if not changed_files_content:
         logging.info("✅ No changed files detected to review.")
         raise typer.Exit()
+    
+    test_keywords = filtering_config.get('test_keywords', ['test', 'spec'])
+    changed_files_map = filter_test_files(changed_files_map, test_keywords)
 
+    if not changed_files_map:
+        logging.info("✅ No non-test files to review after filtering.")
+        raise typer.Exit()
+        
+    changed_files_content = {
+        path: git_utils.get_file_content(repo_path, path) 
+        for path in changed_files_map.keys()
+    }
+
+    logging.info("🧠 Performing smart dependency analysis to pre-populate context...")
+    
+    file_tiers = prioritize_changed_files(changed_files_map)
+    
     final_context_content = dict(changed_files_content)
-
+    
     full_project_structure = git_utils.get_file_structure(
         repo_path,
         filtering_config.get('ignored_paths', []),
         filtering_config.get('ignored_extensions', [])
     )
-    
-    full_diff_for_context = "\n".join(changed_files_map.values())
 
-    for i in range(max_iterations):
-        logging.info(f"--- Context Building Iteration {i + 1}/{max_iterations} ---")
-        
-        context_req = context_builder.determine_context(
-            diff=full_diff_for_context,
-            commit_messages=commit_messages,
-            changed_files_content=changed_files_content,
-            full_context_content=final_context_content, 
-            file_structure=full_project_structure,
-            current_context_files=list(final_context_content.keys()),
-            llm_config=llm_config,
-        )
 
-        logging.info(f"🧠 Agent reasoning: {context_req.reasoning}")
+    for i, tier in enumerate(file_tiers):
+        if not tier: continue
+        logging.info(f"\n--- Building context for Priority Tier {i+1} ({len(tier)} files) ---")
 
-        if context_req.is_sufficient or not context_req.required_additional_files:
-            logging.info("✅ Context is now sufficient.")
-            break
+        for file_path in tier:
+            diff_content = changed_files_map[file_path]
+            logging.info(f"   - Analyzing dependencies for: {file_path}")
+            
+            context_req = context_builder.determine_context(
+                diff=diff_content,
+                commit_messages=commit_messages,
+                changed_files_content={file_path: changed_files_content[file_path]},
+                full_context_content=final_context_content,
+                file_structure=full_project_structure,
+                current_context_files=list(final_context_content.keys()),
+                llm_config=llm_config,
+            )
+            
+            if context_req.is_sufficient or not context_req.required_additional_files:
+                continue
+            
+            newly_found_files = git_utils.find_files_by_names(
+                repo_path, 
+                context_req.required_additional_files,
+                ignored_paths=filtering_config.get('ignored_paths', []),
+                ignored_extensions=filtering_config.get('ignored_extensions', [])
+            )
+            
+            new_files_to_add = [f for f in newly_found_files if f not in final_context_content]
 
-        logging.info(f"🔎 Searching for requested files: {context_req.required_additional_files}")
-        newly_found_files = git_utils.find_files_by_names(
-            repo_path, 
-            context_req.required_additional_files,
-            ignored_paths=filtering_config.get('ignored_paths', []),
-            ignored_extensions=filtering_config.get('ignored_extensions', [])
-        )
-        
-        new_files_to_add = [f for f in newly_found_files if f not in final_context_content]
+            if new_files_to_add:
+                logging.info(f"   - Adding {len(new_files_to_add)} new files to context: {new_files_to_add}")
+                for new_file in new_files_to_add:
+                    final_context_content[new_file] = git_utils.get_file_content(repo_path, new_file)
 
-        if not new_files_to_add:
-            typer.secho("✅ Agent requested files, but no new files were found. Context is considered sufficient.", fg=typer.colors.GREEN)
-            break
-        
-        typer.echo(f"➕ Adding {len(new_files_to_add)} new files to context: {new_files_to_add}")
-        for file_path in new_files_to_add:
-            final_context_content[file_path] = git_utils.get_file_content(repo_path, file_path)
-
-        if len(final_context_content) > max_context_files:
-            typer.secho(f"⚠️ Warning: Context file count ({len(final_context_content)}) exceeds limit of {max_context_files}.", fg=typer.colors.YELLOW)
-            break
-    else:
-        typer.secho(f"⚠️ Warning: Reached max iterations ({max_iterations}).", fg=typer.colors.YELLOW)
+                if len(final_context_content) > max_context_files:
+                    logging.warning("⚠️ Max context files limit reached. Stopping context building.")
+                    break
+        if len(final_context_content) > max_context_files: break
 
 
     logging.info("\n--- Starting Code Review Phase ---")
