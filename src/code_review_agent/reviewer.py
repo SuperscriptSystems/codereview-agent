@@ -132,7 +132,6 @@ def run_review(
 
     
     **--- CRITICAL RULES ---**
-    **--- CRITICAL RULES ---**
     1.  **Modification Analysis:** When you see a `-` line followed by a `+` line, you MUST treat this as a **modification**. Your primary task is to determine if the new version (`+` line) is a correct and good replacement for the old version (`-` line). **DO NOT suggest the `+` line as a fix for the `-` line**, as the change has already been made. Instead, check if the new `+` line itself has any flaws.
     2.  **SCOPE:** Your comments and `line_number` MUST correspond to the **new line number** of lines marked with `+`. DO NOT comment on unchanged or removed (`-`) lines.
     3.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**.
