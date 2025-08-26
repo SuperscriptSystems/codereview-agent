@@ -64,6 +64,7 @@ def _normalize_issue(raw_issue: dict) -> dict:
 def run_review(
     changed_files_map: Dict[str, str],
     final_context_content: Dict[str, str],
+    jira_details: str,
     review_rules: List[str],
     llm_config: dict,
     focus_areas: List[IssueType]
@@ -165,6 +166,7 @@ def run_review(
         annotated_content = git_utils.create_annotated_file(full_file_content, diff_content)
         
         user_prompt = f"""
+        {jira_details}
         Please review the following annotated file: `{file_path}`.
         Return your findings as a raw JSON array string.
 

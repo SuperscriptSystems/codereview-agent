@@ -10,6 +10,7 @@ def determine_context(
     diff: str,
     commit_messages: str,
     changed_files_content: dict,
+    jira_details: str,
     full_context_content: dict,
     file_structure: str,
     current_context_files: list,
@@ -38,6 +39,8 @@ def determine_context(
     user_prompt = f"""
     Analyze the following data and determine what other files are necessary for a complete review.
 
+    {jira_details}
+    
     **Commit Messages:**
     ```
     {commit_messages}

@@ -10,6 +10,7 @@ import io
 
 from . import bitbucket_client, github_client
 from . import git_utils, context_builder, reviewer
+from . import jira_client
 from .models import IssueType, CodeIssue
 
 def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str]]:
@@ -195,6 +196,23 @@ def review(
         for path in changed_files_map.keys()
     }
 
+    jira_details_text = ""
+    branch_name = os.environ.get("BITBUCKET_BRANCH", "")
+    text_to_search_in = f"{branch_name} {' '.join(commit_messages)}"
+    
+    task_id = jira_client.find_task_id(text_to_search_in)
+    
+    if task_id:
+        task_details = jira_client.get_task_details(task_id)
+        if task_details:
+            jira_details_text = (
+                f"**--- JIRA TASK CONTEXT ({task_id}) ---**\n"
+                f"**Title:** {task_details['summary']}\n"
+                f"**Description:**\n{task_details['description']}\n"
+                f"**---------------------------------**\n\n"
+            )
+            logging.info(f"✅ Successfully fetched context from Jira task {task_id}.")
+
     logging.info("🧠 Performing smart dependency analysis to pre-populate context...")
     
     file_tiers = prioritize_changed_files(changed_files_map)
@@ -220,6 +238,7 @@ def review(
                 diff=diff_content,
                 commit_messages=commit_messages,
                 changed_files_content={file_path: changed_files_content[file_path]},
+                jira_details=jira_details_text,
                 full_context_content=final_context_content,
                 file_structure=full_project_structure,
                 current_context_files=list(final_context_content.keys()),
@@ -256,6 +275,7 @@ def review(
     review_results = reviewer.run_review(
         changed_files_map=changed_files_map,
         final_context_content=final_context_content,
+        jira_details=jira_details_text,
         review_rules=config.get('review_rules', []),
         llm_config=llm_config,
         focus_areas=final_focus_areas  
