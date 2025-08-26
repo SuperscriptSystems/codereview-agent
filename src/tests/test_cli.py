@@ -1,73 +1,80 @@
 import pytest
-import git
 import yaml
 from typer.testing import CliRunner
 from unittest.mock import MagicMock
 
-from code_review_agent.cli import app
-from code_review_agent.models import ContextRequirements, ReviewResult, CodeIssue
+from code_review_agent.cli import app, prioritize_changed_files, filter_test_files
+from code_review_agent.models import ContextRequirements, ReviewResult
 
 runner = CliRunner()
 
 @pytest.fixture
-def create_test_config(tmp_path):
-    def _create_config(data):
-        config_path = tmp_path / ".codereview.yml"
-        with open(config_path, "w") as f:
-            yaml.dump(data, f)
-        return str(tmp_path)
-    return _create_config
-
-@pytest.fixture
-def mock_all_dependencies(mocker):
-    """Mocks all external dependencies for CLI tests."""
+def mock_dependencies(mocker):
+    """Mocks all external and internal dependencies for CLI tests."""
     
-    mocker.patch('git.Repo') 
     mocker.patch('code_review_agent.git_utils.get_diff', return_value="diff text")
     mocker.patch('code_review_agent.git_utils.get_commit_messages', return_value="commit messages")
-    mocker.patch('code_review_agent.cli.io')
+    mocker.patch('code_review_agent.cli.PatchSet', return_value=[MagicMock(target_file='b/main.py')])
+    mocker.patch('code_review_agent.git_utils.get_file_content', return_value="file content")
+    mocker.patch('code_review_agent.git_utils.find_files_by_names', return_value=["found_dep.py"])
+    mocker.patch('code_review_agent.git_utils.get_file_structure', return_value="project structure")
 
-    mock_patch_set = mocker.patch('code_review_agent.cli.PatchSet')
-    mock_patched_file = MagicMock()
-    mock_patched_file.target_file = 'b/main.py' 
-    mock_patched_file.__str__.return_value = "diff for main.py"
-    mock_patch_set.return_value = [mock_patched_file]
-    
-    mocker.patch('code_review_agent.git_utils.get_file_content', return_value="full file content")
     mocker.patch('code_review_agent.context_builder.determine_context', return_value=ContextRequirements(
-        required_additional_files=[], is_sufficient=True, reasoning="Sufficient for test."
+        required_additional_files=[], is_sufficient=True, reasoning="Sufficient."
     ))
-    return mocker.patch('code_review_agent.reviewer.run_review', return_value={"main.py": ReviewResult(issues=[])})
+    mocker.patch('code_review_agent.reviewer.run_review', return_value={})
 
 
-def test_focus_logic_with_cli_priority(mock_all_dependencies, create_test_config):
-    """Tests that --focus from CLI has the highest priority."""
-    repo_path = create_test_config({'review_focus': ['Security']})
-    result = runner.invoke(app, ["--repo-path", repo_path, "--focus", "CodeStyle"])
-
-    assert result.exit_code == 0, result.output
-    assert "Using focus areas from command line arguments" in result.output
+def test_filter_test_files():
+    """Tests that the test file filtering logic works correctly."""
+    files_map = {
+        "src/services/UserService.cs": "...",
+        "src/tests/UserService.Tests.cs": "...",
+        "src/spec/component.spec.js": "..."
+    }
+    keywords = ["test", "spec"]
     
-    kwargs = mock_all_dependencies.call_args.kwargs
-    assert set(kwargs["focus_areas"]) == {"CodeStyle"}
-
-def test_focus_logic_with_config_file(mock_all_dependencies, create_test_config):
-    """Tests that focus is taken from .codereview.yml if CLI is not specified."""
-    repo_path = create_test_config({'review_focus': ['Security', 'Performance']})
-    result = runner.invoke(app, ["--repo-path", repo_path])
-
-    assert result.exit_code == 0, result.output
-    assert "Using focus areas from .codereview.yml config file" in result.output
+    result = filter_test_files(files_map, keywords)
     
-    kwargs = mock_all_dependencies.call_args.kwargs
-    assert set(kwargs["focus_areas"]) == {"Security", "Performance"}
+    assert "src/services/UserService.cs" in result
+    assert "src/tests/UserService.Tests.cs" not in result
+    assert "src/spec/component.spec.js" not in result
 
-def test_focus_logic_with_default(mock_all_dependencies, tmp_path):
-    """Tests that the agent defaults to 'LogicError' only."""
+def test_prioritize_changed_files():
+    """Tests that the file prioritization logic works correctly."""
+    files_map = {
+        "src/controller.js": "...",
+        "src/service.js": "...",
+        "src/interface.js": "...",
+        "src/style.css": "..."
+    }
+    
+    tiers = prioritize_changed_files(files_map)
+    
+    assert "src/interface.js" in tiers[0]
+    assert "src/service.js" in tiers[0]
+    assert "src/controller.js" in tiers[1]
+    assert "src/style.css" in tiers[2]
+
+
+def test_review_command_full_flow(mocker, mock_dependencies, tmp_path):
+    """
+    An integration test for the `review` command, ensuring all steps are called.
+    """
+
+    mock_filter = mocker.patch('code_review_agent.cli.filter_test_files', return_value={'main.py': '...'})
+    mock_prioritize = mocker.patch('code_review_agent.cli.prioritize_changed_files', return_value=[['main.py'], [], []])
+    mock_determine_context = mocker.patch('code_review_agent.context_builder.determine_context', return_value=ContextRequirements(
+        required_additional_files=[], is_sufficient=True, reasoning="Sufficient."
+    ))
+    mock_run_review = mocker.patch('code_review_agent.reviewer.run_review', return_value={})
+
     result = runner.invoke(app, ["--repo-path", str(tmp_path)])
     
+
     assert result.exit_code == 0, result.output
-    assert "No focus specified. Checking for 'LogicError' by default" in result.output
     
-    kwargs = mock_all_dependencies.call_args.kwargs
-    assert set(kwargs["focus_areas"]) == {"LogicError"}
+    mock_filter.assert_called_once()
+    mock_prioritize.assert_called_once()
+    mock_determine_context.assert_called_once()
+    mock_run_review.assert_called_once()

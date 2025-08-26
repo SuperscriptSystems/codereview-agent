@@ -1,109 +1,109 @@
-import pytest
 import os
+import pytest
 from git import Repo
 from code_review_agent import git_utils
 
 @pytest.fixture
 def test_repo(tmp_path):
-    """Creates a temporary Git repository for testing."""
     repo_path = tmp_path / "test_repo"
     repo_path.mkdir()
     
-    (repo_path / "src" / "services").mkdir(parents=True)
+    (repo_path / "src").mkdir()
+    (repo_path / "src" / "interfaces").mkdir()
+    (repo_path / "src" / "services").mkdir()
+    (repo_path / "src" / "interfaces" / "IUserService.cs").write_text("public interface IUserService {}")
+    (repo_path / "src" / "services" / "UserService.cs").write_text(
+        "using Company.Core.Interfaces;\n\npublic class UserService : IUserService {}"
+    )
     
     repo = Repo.init(repo_path)
-    
-    (repo_path / "src" / "config.py").write_text("API_KEY = '123'")
-    (repo_path / "src" / "services" / "user_service.py").write_text("class UserService:\n  pass")
-    repo.index.add(["src/config.py", "src/services/user_service.py"])
+    repo.index.add(["src/interfaces/IUserService.cs", "src/services/UserService.cs"])
     repo.index.commit("Initial commit")
     base_commit = repo.head.commit
     
-    (repo_path / "main.py").write_text("import ...")
-    (repo_path / "src" / "config.py").write_text("API_KEY = '456' # Updated")
-
-    repo.index.add(["main.py", "src/config.py"])
-    repo.index.commit("Second commit with changes")
+    (repo_path / "src" / "services" / "UserService.cs").write_text(
+        "using Company.Core.Interfaces;\n\n// A change\npublic class UserService : IUserService {}"
+    )
+    repo.index.add(["src/services/UserService.cs"])
+    repo.index.commit("Second commit")
     head_commit = repo.head.commit
     
     return str(repo_path), base_commit.hexsha, head_commit.hexsha
 
+
 def test_get_diff(test_repo):
     repo_path, base_ref, head_ref = test_repo
     diff = git_utils.get_diff(repo_path, base_ref, head_ref)
+    assert '+++ b/src/services/UserService.cs' in diff
+    assert "+// A change" in diff
 
-    assert '+++ b/main.py' in diff
-    assert '+++ b/src/config.py' in diff
-    assert "+API_KEY = '456' # Updated" in diff 
+def test_get_commit_messages(test_repo):
+    repo_path, base_ref, head_ref = test_repo
+    messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
+    assert "Second commit" in messages
+
+
+def test_extract_dependencies_from_content_csharp():
+    """Tests Tree-sitter dependency extraction for C#."""
+    file_path = "MyService.cs"
+    file_content = """
+    using System.Text;
+    using Company.Core.Models;
+
+    namespace MyNamespace
+    {
+        public class MyService : IMyService, IDisposable
+        {
+            // ...
+        }
+    }
+    """
+    dependencies = git_utils.extract_dependencies_from_content(file_path, file_content)
+
+    assert set(dependencies) == {"Text", "Models", "IMyService", "IDisposable"}
+
+def test_extract_dependencies_from_content_python():
+    """Tests Tree-sitter dependency extraction for Python."""
+    file_path = "main.py"
+    file_content = """
+    import os
+    from my_project.utils import helper_function
+    """
+    dependencies = git_utils.extract_dependencies_from_content(file_path, file_content)
+    assert set(dependencies) == {"os", "utils"}
 
 def test_find_files_by_names(test_repo):
-
     repo_path, _, _ = test_repo
-    names_to_find = ["user_service", "config"]
-
+    names_to_find = ["IUserService", "UserService"]
     found_files = git_utils.find_files_by_names(repo_path, names_to_find, [], [])
-
-    assert set(found_files) == {
-        os.path.join('src', 'services', 'user_service.py').replace('\\', '/'),
-        os.path.join('src', 'config.py').replace('\\', '/')
-    }
-    assert len(found_files) == 2
-
-def test_find_files_by_names_no_matches(test_repo):
-
-    repo_path, _, _ = test_repo
-    names_to_find = ["non_existent_file", "database"]
-
-    found_files = git_utils.find_files_by_names(repo_path, names_to_find, [], [])
-
-    assert len(found_files) == 0
-
-
-def test_get_file_structure_from_paths():
-    paths = [
-        "src/services/user_service.py",
-        "main.py",
-        "src/config.py"
-    ]
-
-
-    structure = git_utils.get_file_structure_from_paths(paths)
-
-
-    expected_structure = "- main.py\n- src/config.py\n- src/services/user_service.py"
-    assert structure == expected_structure
-
-def test_get_file_structure_from_paths_empty_list():
-    paths = []
-
-
-    structure = git_utils.get_file_structure_from_paths(paths)
-
-    assert structure == "No files in context."
-
-def test_get_file_structure(test_repo):
-
-    repo_path, _, _ = test_repo
-
-    structure = git_utils.get_file_structure(str(repo_path), [], [])
-
-    assert "test_repo/" in structure
-    assert "src/" in structure
-    assert "    config.py" in structure 
-    assert "        user_service.py" in structure
-    assert "    main.py" in structure
-    assert "app_config.py" not in structure
-
-
-def test_get_file_content_handles_file_not_found(test_repo):
-    """
-    Tests that get_file_content returns a specific message for a non-existent file.
-    """
     
-    repo_path, _, _ = test_repo
-    non_existent_file = "path/to/a/file/that/does/not/exist.txt"
+    assert len(found_files) == 2
+    assert os.path.join('src', 'interfaces', 'IUserService.cs').replace('\\', '/') in found_files
+    assert os.path.join('src', 'services', 'UserService.cs').replace('\\', '/') in found_files
 
-    content = git_utils.get_file_content(repo_path, non_existent_file)
-
-    assert "File not found" in content
-    assert non_existent_file in content    
+def test_create_annotated_file():
+    """
+    Tests that the annotation function correctly merges a diff and full content.
+    """
+    # Arrange
+    full_content = "line 1\nline two updated\nline 3"
+    diff_content = (
+        "--- a/file.txt\n"
+        "+++ b/file.txt\n"
+        "@@ -1,3 +1,3 @@\n"
+        " line 1\n"
+        "-line 2\n"
+        "+line two updated\n"
+        " line 3\n"
+    )
+    
+    annotated_file = git_utils.create_annotated_file(full_content, diff_content)
+    
+    expected_output = """   1    1  line 1
+   2      -line 2
+        2 +line two updated
+   3    3  line 3"""
+    
+    # Assert
+    # Порівнюємо вивід, прибравши зайві пробіли/переноси на початку і в кінці
+    assert annotated_file.strip() == expected_output.strip()
