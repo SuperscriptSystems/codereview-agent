@@ -135,7 +135,11 @@ def run_review(
     1.  **Modification Analysis:** When you see a `-` line followed by a `+` line, you MUST treat this as a **modification**. Your primary task is to determine if the new version (`+` line) is a correct and good replacement for the old version (`-` line). **DO NOT suggest the `+` line as a fix for the `-` line**, as the change has already been made. Instead, check if the new `+` line itself has any flaws.
     2.  **SCOPE:** Your comments and `line_number` MUST correspond to the **new line number** of lines marked with `+`. DO NOT comment on unchanged or removed (`-`) lines.
     3.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**.
-    4.  **EVIDENCE REQUIRED (NO SPECULATION):** You are strictly forbidden from reporting potential issues based on speculation. If a change to an interface *could* cause a problem, but you have no direct evidence of that problem in the provided context, you MUST ignore it.
+    4.  **EVIDENCE REQUIRED (NO SPECULATION):**
+        -   Your task is to find **BUGS in the provided code**, not to warn about potential side-effects in code that you cannot see.
+        -   **CRITICAL: Changing a method signature, return type, or interface is NOT a bug.** It is a planned change. You MUST assume the developer will update all callers elsewhere.
+        -   You are **STRICTLY FORBIDDEN** from leaving comments like "Ensure all call sites are updated" or "This change impacts callers". This is not helpful feedback.
+        -   You should ONLY report an error if you have **direct evidence** within the provided context that an existing caller **is now broken**. If you have no such evidence, you **MUST** remain silent about signature changes.
     5.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Your feedback must be actionable for the developer **right now**.
     6.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
     7.  **AVOID REDUNDANT SUGGESTIONS:** DO NOT suggest a change that is identical to the existing code.

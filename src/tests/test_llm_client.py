@@ -28,7 +28,6 @@ def test_get_client_configures_for_openai_when_specified(mocker):
 
     get_client({"provider": "openai"})
 
-    # Assert
     mock_openai_class.assert_called_once()
     call_kwargs = mock_openai_class.call_args.kwargs
     
