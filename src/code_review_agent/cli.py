@@ -59,23 +59,21 @@ def filter_test_files(
     changed_files_map: Dict[str, str], 
     test_keywords: List[str]
 ) -> Dict[str, str]:
-    """
-    Filters out test files from the map of changed files.
-    """
+    """Filters out test files from the map of changed files."""
     logging.info("🔬 Filtering out test files from the review scope...")
     
     files_for_review_map = {}
+    test_keywords_set = set(test_keywords)
+
     for path, diff in changed_files_map.items():
-        is_test_file = any(
-            keyword in part.lower() 
-            for keyword in test_keywords 
-            for part in os.path.normpath(path).split(os.sep)
-        )
+
+        path_parts = {part.lower() for part in os.path.normpath(path).split(os.sep)} 
         
-        if not is_test_file:
+        if not path_parts.intersection(test_keywords_set):
             files_for_review_map[path] = diff
         else:
-            logging.info(f"   - Ignoring test file based on keywords: {path}")
+            logging.info(f"   - Ignoring test file based on exact keyword match: {path}")
+            
             
     return files_for_review_map
 
@@ -209,8 +207,19 @@ def review(
     test_keywords = filtering_config.get('test_keywords', ['test', 'spec'])
     changed_files_map = filter_test_files(changed_files_map, test_keywords)
 
+    is_bitbucket_pr = "BITBUCKET_PR_ID" in os.environ
+    is_github_pr = "GITHUB_ACTIONS" in os.environ and "GITHUB_PR_NUMBER" in os.environ
+
     if not changed_files_map:
-        logging.info("✅ No non-test files to review after filtering.")
+        logging.info("✅ No non-test files to review after filtering. Changes were likely only in test files.")
+        
+        if is_bitbucket_pr:
+            logging.info("🚀 Publishing results to Bitbucket PR...")
+            bitbucket_client.cleanup_and_post_all_comments([], {})
+        elif is_github_pr:
+            logging.info("🚀 Publishing results to GitHub PR...")
+            github_client.handle_pr_results([], {})
+
         raise typer.Exit()
         
     changed_files_content = {
