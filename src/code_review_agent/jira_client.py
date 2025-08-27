@@ -46,3 +46,16 @@ def get_task_details(task_id: str) -> dict | None:
     except Exception as e:
         logger.warning(f"Could not fetch details for Jira task {task_id}. Error: {e}")
         return None
+    
+def add_comment(task_id: str, comment: str):
+    """Adds a comment to a Jira issue."""
+    client = _get_jira_client()
+    if not client or not task_id:
+        return
+    
+    logger.info(f"Adding comment to Jira task {task_id}...")
+    try:
+        client.add_comment(task_id, comment)
+        logger.info("✅ Successfully added comment to Jira.")
+    except Exception as e:
+        logger.error(f"Failed to add comment to Jira task {task_id}. Error: {e}")    

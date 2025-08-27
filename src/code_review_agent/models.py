@@ -33,3 +33,16 @@ class ReviewResult(BaseModel):
 
     def is_ok(self) -> bool:
         return not self.issues
+
+
+class TaskRelevance(BaseModel):
+    score: int = Field(
+        ..., 
+        description="A score from 0 to 100 representing how related the code change is to the Jira task.",
+        ge=0,
+        le=100 
+    )
+    justification: str = Field(
+        ...,
+        description="A brief, one-sentence justification for the score."
+    )

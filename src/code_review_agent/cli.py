@@ -11,6 +11,7 @@ import io
 from . import bitbucket_client, github_client
 from . import git_utils, context_builder, reviewer
 from . import jira_client
+from . import relevance_assessor
 from .models import IssueType, CodeIssue
 
 def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str]]:
@@ -328,6 +329,27 @@ def review(
                 if issue.suggestion:
                     logging.info(f"    💡 Suggestion: {issue.suggestion}")
                     logging.info(f"    ```\n    {issue.suggestion}\n    ```")
+                    
+    if task_id:
+        logging.info("\n---  Assessing Task Relevance ---")
+        
+        review_summary = f"Found {len(all_issues)} issue(s)."
+        
+        relevance = relevance_assessor.assess_relevance(
+            jira_details=jira_details_text,
+            commit_messages=commit_messages,
+            diff_text="\n".join(changed_files_map.values()),
+            review_summary=review_summary,
+            llm_config=llm_config
+        )
+
+        if relevance:
+            comment_body = (
+                f"🤖 **AI Assessment Complete for this PR**\n\n"
+                f"/!\\ The code changes have a **{relevance.score}%** relevance score to this task.\n\n"
+                f"**Justification:** {relevance.justification}"
+            )
+            jira_client.add_comment(task_id, comment_body)                    
 
 
     if not all_issues:
