@@ -32,6 +32,27 @@ def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str
             tier3.append(path)
     return [tier1, tier2, tier3]
 
+def _get_task_id_from_git_info(commit_messages: str) -> str | None:
+    """
+    Finds a Jira task ID by searching in common CI/CD environment variables and commit messages.
+    Prioritizes branch names over commit messages.
+    """
+
+    branch_name = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("BITBUCKET_BRANCH", "")
+    if branch_name:
+        task_id = jira_client.find_task_id(branch_name)
+        if task_id:
+            logging.info(f"Found Jira task ID '{task_id}' in branch name.")
+            return task_id
+
+    commit_text = " ".join(commit_messages)
+    task_id = jira_client.find_task_id(commit_text)
+    if task_id:
+        logging.info(f"Found Jira task ID '{task_id}' in commit messages.")
+        return task_id
+    
+    logging.info("No Jira task ID found in branch name or commit messages.")
+    return None
 
 def filter_test_files(
     changed_files_map: Dict[str, str], 
@@ -196,12 +217,10 @@ def review(
         for path in changed_files_map.keys()
     }
 
+    task_id = _get_task_id_from_git_info(commit_messages)
+
     jira_details_text = ""
-    branch_name = os.environ.get("BITBUCKET_BRANCH", "")
-    text_to_search_in = f"{branch_name} {' '.join(commit_messages)}"
-    
-    task_id = jira_client.find_task_id(text_to_search_in)
-    
+
     if task_id:
         task_details = jira_client.get_task_details(task_id)
         if task_details:
