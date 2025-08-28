@@ -77,7 +77,7 @@ def filter_test_files(
             
     return files_for_review_map
 
-app = typer.Typer(add_completion=False)
+app = typer.Typer(add_completion=False, invoke_without_command=True)
 
 
 def setup_logging(trace_mode: bool):
@@ -119,19 +119,9 @@ def load_config(repo_path: str) -> dict:
 POSSIBLE_FOCUS_AREAS = list(IssueType.__args__) 
 
 
-@app.command()
-def review(
-    repo_path: Annotated[str, typer.Option("--repo-path", help="Path to the local Git repository.")] = ".",
-    base_ref: Annotated[str, typer.Option(help="The base commit/ref to compare against.")] = "HEAD~1",
-    head_ref: Annotated[str, typer.Option(help="The commit hash or ref to review.")] = "HEAD",
-    staged: Annotated[bool, typer.Option(help="Review only staged files instead of a commit range.")] = False,
-    focus_from_cli: Annotated[Optional[List[str]], typer.Option(
-        "-f", "--focus", 
-        help=f"Areas of focus. Can be used multiple times. Possible values: {', '.join(POSSIBLE_FOCUS_AREAS)}"
-    )] = None,
-    trace: Annotated[bool, typer.Option(
-        "--trace", help="Enable detailed debug logging to the console."
-    )] = False,
+def run_review_logic(
+    repo_path: str, base_ref: str, head_ref: str, staged: bool,
+    focus_from_cli: Optional[List[str]], trace: bool
 ):
     """
     Performs an AI-powered, context-aware code review using an iterative context-building approach.
@@ -344,11 +334,29 @@ def review(
     else:
         logging.info(f"\nFound a total of {len(all_issues)} issue(s).")
 
-def main():
-    app()
 
-if __name__ == "__main__":
-    main()
+@app.callback()
+def main_callback(
+    ctx: typer.Context,
+    repo_path: Annotated[str, typer.Option("--repo-path")] = ".",
+    base_ref: Annotated[str, typer.Option()] = "HEAD~1",
+    head_ref: Annotated[str, typer.Option()] = "HEAD",
+    staged: Annotated[bool, typer.Option()] = False,
+    focus_from_cli: Annotated[Optional[List[str]], typer.Option("-f", "--focus")] = None,
+    trace: Annotated[bool, typer.Option("--trace")] = False,
+):
+    """
+    AI Code Review Agent.
+    If no subcommand (like 'assess') is given, this will run the code review by default.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+        
+    typer.echo("Running default command: review")
+    run_review_logic(
+        repo_path=repo_path, base_ref=base_ref, head_ref=head_ref, staged=staged,
+        focus_from_cli=focus_from_cli, trace=trace
+    )
 
 @app.command()
 def assess(
@@ -400,3 +408,10 @@ def assess(
                 f"**Justification:** {relevance.justification}"
             )
                 jira_client.add_comment(task_id, comment_body)    
+
+
+def main():
+    app()
+
+if __name__ == "__main__":
+    main()                
