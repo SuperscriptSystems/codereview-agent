@@ -10,8 +10,7 @@ def find_task_id(text: str) -> str | None:
     """Finds a Jira-like task ID (e.g., ABC-123) in a string."""
     if not text:
         return None
-    
-    match = re.search(r'(?<![A-Z\d-])([A-Z]{2,4}-\d+)', text, re.IGNORECASE)
+    match = re.search(r'(?<![A-Z\d-])([A-Z][A-Z0-9]{1,9}-\d+)', text, re.IGNORECASE)
     return match.group(1).upper() if match else None
 
 def get_task_details(task_id: str) -> dict | None:

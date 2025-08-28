@@ -33,12 +33,14 @@ def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str
             tier3.append(path)
     return [tier1, tier2, tier3]
 
-def _get_task_id_from_git_info(commit_messages: str) -> str | None:
+def _get_task_id_from_git_info(commit_messages) -> str | None:
     """
-    Finds a Jira task ID by searching in common CI/CD environment variables and commit messages.
-    Prioritizes branch names over commit messages.
+    Finds a Jira task ID by searching (in order):
+    1. Branch name (GITHUB_HEAD_REF / BITBUCKET_BRANCH)
+    2. Explicit BITBUCKET_COMMIT_MESSAGE (if provided)
+    3. Supplied commit messages (list or str)
+    4. (Fallback) last 10 commit messages (git log) if still not found
     """
-
     branch_name = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("BITBUCKET_BRANCH", "")
     if branch_name:
         task_id = jira_client.find_task_id(branch_name)
@@ -46,13 +48,38 @@ def _get_task_id_from_git_info(commit_messages: str) -> str | None:
             logging.info(f"Found Jira task ID '{task_id}' in branch name.")
             return task_id
 
-    commit_text = " ".join(commit_messages)
-    task_id = jira_client.find_task_id(commit_text)
+    commit_msg_env = os.environ.get("BITBUCKET_COMMIT_MESSAGE", "")
+    if commit_msg_env:
+        task_id = jira_client.find_task_id(commit_msg_env)
+        if task_id:
+            logging.info("Found Jira task ID in BITBUCKET_COMMIT_MESSAGE.")
+            return task_id
+
+    if isinstance(commit_messages, (list, tuple)):
+        joined = " ".join(m for m in commit_messages if m)
+    else:
+        joined = str(commit_messages)
+
+    task_id = jira_client.find_task_id(joined)
     if task_id:
-        logging.info(f"Found Jira task ID '{task_id}' in commit messages.")
+        logging.info("Found Jira task ID in provided commit messages.")
         return task_id
-    
-    logging.info("No Jira task ID found in branch name or commit messages.")
+
+    try:
+        import subprocess
+        log_output = subprocess.check_output(
+            ["git", "log", "-n", "10", "--pretty=%B"],
+            text=True,
+            stderr=subprocess.DEVNULL
+        )
+        task_id = jira_client.find_task_id(log_output)
+        if task_id:
+            logging.info("Found Jira task ID in last 10 commits fallback.")
+            return task_id
+    except Exception as e:
+        logging.debug(f"Fallback git log scan failed: {e}")
+
+    logging.info("No Jira task ID found in branch name, env commit message, commit range or fallback log.")
     return None
 
 def filter_test_files(
@@ -380,6 +407,7 @@ def assess(
     
     if task_id:
         task_details = jira_client.get_task_details(task_id)
+        jira_details_text = ""
         if task_details:
             jira_details_text = (
                 f"**--- JIRA TASK CONTEXT ({task_id}) ---**\n"
@@ -390,24 +418,24 @@ def assess(
             logging.info(f"✅ Successfully fetched context from Jira task {task_id}.")
         else:
             logging.warning(f"Found Jira task ID '{task_id}', but could not fetch its details.")
-            
-            logging.info("\n--- Assessing Task Relevance ---")
-            
-            relevance = relevance_assessor.assess_relevance(
-                jira_details=jira_details_text,
-                commit_messages=commit_messages,
-                diff_text=diff_text,
-                review_summary="Code has been merged.",
-                llm_config=load_config(repo_path).get('llm', {})
-            )
 
-            if relevance:
-                comment_body = (
+        logging.info("\n--- Assessing Task Relevance ---")
+        relevance = relevance_assessor.assess_relevance(
+            jira_details=jira_details_text,
+            commit_messages=commit_messages,
+            diff_text=diff_text,
+            review_summary="Code has been merged.",
+            llm_config=load_config(repo_path).get('llm', {})
+        )
+        if relevance:
+            comment_body = (
                 f"🤖 **AI Assessment Complete for this PR**\n\n"
                 f"/!\\ The code changes have a **{relevance.score}%** relevance score to this task.\n\n"
                 f"**Justification:** {relevance.justification}"
             )
-                jira_client.add_comment(task_id, comment_body)    
+            jira_client.add_comment(task_id, comment_body)
+    else:
+        logging.info("No task ID found; skipping relevance assessment.")    
 
 
 def main():
