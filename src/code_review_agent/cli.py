@@ -402,12 +402,37 @@ def assess(
     logging.info("🔍 Gathering data for Jira assessment...")
     commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
     diff_text = git_utils.get_diff(repo_path, base_ref, head_ref)
-    
-    task_id = _get_task_id_from_git_info(commit_messages)
-    
+
+    # Diagnostics
+    logging.info(f"[Diag] BITBUCKET_BRANCH={os.environ.get('BITBUCKET_BRANCH')}")
+    logging.info(f"[Diag] BITBUCKET_COMMIT_MESSAGE={os.environ.get('BITBUCKET_COMMIT_MESSAGE')!r}")
+    if isinstance(commit_messages, (list, tuple)):
+        logging.debug(f"[Diag] Collected {len(commit_messages)} commit messages in range.")
+
+    # Manual override
+    manual_task = os.environ.get("JIRA_TASK_ID")
+    if manual_task:
+        logging.info(f"Using manual JIRA_TASK_ID override: {manual_task}")
+        task_id = manual_task
+    else:
+        task_id = _get_task_id_from_git_info(commit_messages)
+
+    # Validate project prefix if we can fetch project keys
+    if task_id:
+        proj_prefix = task_id.split("-")[0]
+        try:
+            known_prefixes = jira_client.project_keys()
+            if known_prefixes and proj_prefix not in known_prefixes:
+                logging.warning(f"Extracted task '{task_id}' has unknown project prefix '{proj_prefix}'. Known: {sorted(list(known_prefixes))}")
+                task_id = None
+        except Exception as e:
+            logging.debug(f"Could not validate project prefix: {e}")
+
+    jira_details_text = ""
+    task_details = None
+
     if task_id:
         task_details = jira_client.get_task_details(task_id)
-        jira_details_text = ""
         if task_details:
             jira_details_text = (
                 f"**--- JIRA TASK CONTEXT ({task_id}) ---**\n"
@@ -417,25 +442,35 @@ def assess(
             )
             logging.info(f"✅ Successfully fetched context from Jira task {task_id}.")
         else:
-            logging.warning(f"Found Jira task ID '{task_id}', but could not fetch its details.")
-
-        logging.info("\n--- Assessing Task Relevance ---")
-        relevance = relevance_assessor.assess_relevance(
-            jira_details=jira_details_text,
-            commit_messages=commit_messages,
-            diff_text=diff_text,
-            review_summary="Code has been merged.",
-            llm_config=load_config(repo_path).get('llm', {})
-        )
-        if relevance:
-            comment_body = (
-                f"🤖 **AI Assessment Complete for this PR**\n\n"
-                f"/!\\ The code changes have a **{relevance.score}%** relevance score to this task.\n\n"
-                f"**Justification:** {relevance.justification}"
-            )
-            jira_client.add_comment(task_id, comment_body)
+            logging.warning(f"Found Jira task ID '{task_id}', but could not fetch its details (404 or no permission). Proceeding without description.")
     else:
-        logging.info("No task ID found; skipping relevance assessment.")    
+        logging.info("No task ID found; skipping relevance assessment.")
+        return
+
+    logging.info("\n--- Assessing Task Relevance ---")
+    relevance = relevance_assessor.assess_relevance(
+        jira_details=jira_details_text,
+        commit_messages=commit_messages,
+        diff_text=diff_text,
+        review_summary="Code has been merged.",
+        llm_config=load_config(repo_path).get('llm', {})
+    )
+
+    if not relevance:
+        logging.info("Relevance assessment failed or returned no result.")
+        return
+
+    logging.info(f"Relevance score: {relevance.score}%")
+    if not task_details:
+        logging.info("Skip commenting (issue inaccessible).")
+        return
+
+    comment_body = (
+        f"🤖 **AI Assessment Complete**\n\n"
+        f"Relevance: **{relevance.score}%**\n\n"
+        f"Justification: {relevance.justification}"
+    )
+    jira_client.add_comment(task_id, comment_body)
 
 
 def main():
