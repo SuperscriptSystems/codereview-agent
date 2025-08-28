@@ -338,28 +338,6 @@ def review(
                 if issue.suggestion:
                     logging.info(f"    💡 Suggestion: {issue.suggestion}")
                     logging.info(f"    ```\n    {issue.suggestion}\n    ```")
-                    
-    if task_id:
-        logging.info("\n---  Assessing Task Relevance ---")
-        
-        review_summary = f"Found {len(all_issues)} issue(s)."
-        
-        relevance = relevance_assessor.assess_relevance(
-            jira_details=jira_details_text,
-            commit_messages=commit_messages,
-            diff_text="\n".join(changed_files_map.values()),
-            review_summary=review_summary,
-            llm_config=llm_config
-        )
-
-        if relevance:
-            comment_body = (
-                f"🤖 **AI Assessment Complete for this PR**\n\n"
-                f"/!\\ The code changes have a **{relevance.score}%** relevance score to this task.\n\n"
-                f"**Justification:** {relevance.justification}"
-            )
-            jira_client.add_comment(task_id, comment_body)                    
-
 
     if not all_issues:
         logging.info("🎉 Great job! No issues found.")
@@ -371,3 +349,54 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+@app.command()
+def assess(
+    repo_path: Annotated[str, typer.Option()] = ".",
+    base_ref: Annotated[str, typer.Option()] = "HEAD~1",
+    head_ref: Annotated[str, typer.Option()] = "HEAD",
+):
+    """Finds the Jira task and posts a relevance assessment comment."""
+    setup_logging(trace_mode=False)
+    load_dotenv(override=True)
+    
+    if not os.getenv("JIRA_URL"):
+        logging.info("Jira integration is not configured. Skipping assessment.")
+        raise typer.Exit()
+        
+    logging.info("🔍 Gathering data for Jira assessment...")
+    commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
+    diff_text = git_utils.get_diff(repo_path, base_ref, head_ref)
+    
+    task_id = _get_task_id_from_git_info(commit_messages)
+    
+    if task_id:
+        task_details = jira_client.get_task_details(task_id)
+        if task_details:
+            jira_details_text = (
+                f"**--- JIRA TASK CONTEXT ({task_id}) ---**\n"
+                f"**Title:** {task_details.get('summary', 'N/A')}\n"
+                f"**Description:**\n{task_details.get('description', 'N/A')}\n"
+                f"**---------------------------------**\n\n"
+            )
+            logging.info(f"✅ Successfully fetched context from Jira task {task_id}.")
+        else:
+            logging.warning(f"Found Jira task ID '{task_id}', but could not fetch its details.")
+            
+            logging.info("\n--- Assessing Task Relevance ---")
+            
+            relevance = relevance_assessor.assess_relevance(
+                jira_details=jira_details_text,
+                commit_messages=commit_messages,
+                diff_text=diff_text,
+                review_summary="Code has been merged.",
+                llm_config=load_config(repo_path).get('llm', {})
+            )
+
+            if relevance:
+                comment_body = (
+                f"🤖 **AI Assessment Complete for this PR**\n\n"
+                f"/!\\ The code changes have a **{relevance.score}%** relevance score to this task.\n\n"
+                f"**Justification:** {relevance.justification}"
+            )
+                jira_client.add_comment(task_id, comment_body)    
