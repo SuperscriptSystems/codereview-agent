@@ -19,43 +19,36 @@ def get_task_details(task_id: str) -> dict | None:
     """
     logger.info(f"🔎 Fetching details for Jira task: {task_id} using direct requests...")
     try:
-        
-        jira_url = os.environ["JIRA_URL"]
+        jira_url = os.environ["JIRA_URL"].rstrip("/")
         email = os.environ["JIRA_USER_EMAIL"]
         token = os.environ["JIRA_API_TOKEN"]
 
-        api_url = f"{jira_url}/rest/api/2/issue/{task_id}"
-        
+        api_url = f"{jira_url}/rest/api/2/issue/{task_id.upper()}"
         auth = HTTPBasicAuth(email, token)
-        
+        headers = { "Accept": "application/json" }
 
-        headers = {
-          "Accept": "application/json"
-        }
-
-        response = requests.request(
-           "GET",
-           api_url,
-           headers=headers,
-           auth=auth
-        )
-        
+        response = requests.request("GET", api_url, headers=headers, auth=auth)
+        if response.status_code == 404:
+            logger.warning(f"Jira returned 404 for {task_id}. Possible reasons: "
+                           f"(1) Wrong issue key, (2) No Browse permission, (3) Recently deleted.")
+            return None
         response.raise_for_status()
-        
+
         data = response.json()
-        
         description = "No description found."
         if data.get('fields', {}).get('description'):
             try:
                 desc_content = data['fields']['description'].get('content', [])
                 text_parts = [
-                    p.get('content', [{}])[0].get('text', '') 
+                    p.get('content', [{}])[0].get('text', '')
                     for block in desc_content if block.get('type') == 'paragraph'
                     for p in block.get('content', []) if p.get('type') == 'text'
                 ]
-                description = "\n".join(text_parts)
+                filtered = [t for t in text_parts if t]
+                if filtered:
+                    description = "\n".join(filtered)
             except Exception:
-                 description = str(data['fields']['description'])
+                description = str(data['fields']['description'])
 
         return {
             "summary": data.get('fields', {}).get('summary', 'N/A'),

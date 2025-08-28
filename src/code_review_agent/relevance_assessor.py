@@ -59,15 +59,42 @@ def assess_relevance(
                 {"role": "user", "content": user_prompt},
             ]
         )
-        raw_response_text = response.choices.message.content.strip()
-        
+        # Robust extraction (choices may be list; element may have message.content or text)
+        choices = getattr(response, "choices", None)
+        if not choices:
+            logger.error(f"LLM response has no 'choices': {response}")
+            return None
+
+        first = choices[0]
+        content = None
+        # pydantic / attr object
+        if hasattr(first, "message") and getattr(first.message, "content", None):
+            content = first.message.content
+        # some providers: first.text
+        elif hasattr(first, "text"):
+            content = first.text
+        # dict style
+        elif isinstance(first, dict):
+            content = (
+                first.get("message", {}).get("content") or
+                first.get("text")
+            )
+
+        if not content:
+            logger.error(f"Cannot extract content from first choice: {first}")
+            return None
+
+        raw_response_text = content.strip()
+        # Optional debug
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Raw relevance LLM response: {raw_response_text[:500]}")
+
         try:
             parsed_json = json.loads(raw_response_text, strict=False)
             return TaskRelevance(**parsed_json)
         except (json.JSONDecodeError, ValidationError) as e:
             logger.warning(f"Failed to parse relevance assessment response. Error: {e}")
             return None
-            
     except Exception as e:
-        logger.error(f"Critical error during relevance assessment LLM call: {e}", exc_info=True)
+        logger.error(f"Error during LLM relevance assessment: {e}")
         return None
