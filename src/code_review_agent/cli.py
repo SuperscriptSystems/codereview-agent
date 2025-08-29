@@ -466,7 +466,6 @@ def assess(
         return
 
     comment_body = (
-        f"🤖 *AI Assessment Complete*\n\n"
         f"Relevance: *{relevance.score}%*\n\n"
         f"Justification: {relevance.justification}"
     )

@@ -105,7 +105,7 @@ def _current_account_id() -> str | None:
         pass
     return None
 
-def _remove_previous_ai_comments(jira_url: str, task_id: str, marker: str, account_id: str | None):
+def _remove_previous_ai_comments(jira_url: str, task_id: str, markers: list[str], account_id: str | None):
     auth, headers = _auth_headers()
     try:
         resp = requests.get(
@@ -117,11 +117,18 @@ def _remove_previous_ai_comments(jira_url: str, task_id: str, marker: str, accou
             return
         data = resp.json()
         removed = 0
+
+        def _norm(txt: str) -> str:
+            return txt.replace("*", "").strip()
+
+        norm_markers = {_norm(m) for m in markers}
+
         for c in data.get("comments", []):
             cid = c.get("id")
             author_id = c.get("author", {}).get("accountId")
             body_text = _extract_text_from_adf(c.get("body"))
-            if marker in body_text and (account_id is None or author_id == account_id):
+            body_norm = _norm(body_text)
+            if any(nm in body_norm for nm in norm_markers) and (account_id is None or author_id == account_id):
                 try:
                     d = requests.delete(
                         f"{jira_url}/rest/api/3/issue/{task_id}/comment/{cid}",
@@ -141,23 +148,30 @@ def _remove_previous_ai_comments(jira_url: str, task_id: str, marker: str, accou
 
 def add_comment(task_id: str, comment: str):
     """
-    Adds (replaces) AI assessment comment:
-      - Deletes previous comments containing marker (and authored by this user if detectable)
-      - Posts a fresh one.
+    Adds (replaces) AI assessment comment with bold marker.
     """
     logger.info(f"Adding comment to Jira task {task_id}...")
     try:
         jira_url = os.environ["JIRA_URL"].rstrip("/")
         auth, headers = _auth_headers()
 
-        marker = os.getenv("JIRA_AI_COMMENT_TAG", "🤖 AI Assessment")
-        if marker not in comment:
-            comment = f"{marker}\n\n{comment}"
+        # Primary (bold) marker
+        primary_marker = os.getenv("JIRA_AI_COMMENT_TAG", "*🤖 AI Assessment Complete*")
+        
+        legacy_markers = [
+            "🤖 AI Assessment Complete",
+            "🤖 AI Assessment"
+        ]
+        all_markers = [primary_marker] + [m for m in legacy_markers if m != primary_marker]
+
+        first_line = comment.strip().splitlines()[0] if comment.strip() else ""
+
+        if not any(first_line.replace("*", "").startswith(m.replace("*", "")) for m in all_markers):
+            comment = f"{primary_marker}\n\n{comment}"
 
         account_id = _current_account_id()
-        _remove_previous_ai_comments(jira_url, task_id, marker, account_id)
+        _remove_previous_ai_comments(jira_url, task_id, all_markers, account_id)
 
-        # Use v3 first, fallback v2
         payload = {"body": comment}
         for ver in ("3", "2"):
             api_url = f"{jira_url}/rest/api/{ver}/issue/{task_id}/comment"
