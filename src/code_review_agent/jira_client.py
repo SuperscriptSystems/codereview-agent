@@ -78,18 +78,101 @@ def get_task_details(task_id: str) -> dict | None:
         logger.error(f"Failed to connect to Jira: {e}")
         return None
 
+def _extract_text_from_adf(body):
+    """
+    Extract plain text from Atlassian Document Format (very simplified).
+    """
+    if isinstance(body, str):
+        return body
+    if isinstance(body, dict):
+        parts = []
+        for block in body.get("content", []):
+            for item in block.get("content", []):
+                txt = item.get("text")
+                if txt:
+                    parts.append(txt)
+        return "\n".join(parts)
+    return ""
+
+def _current_account_id() -> str | None:
+    try:
+        jira_url = os.environ["JIRA_URL"].rstrip("/")
+        auth, headers = _auth_headers()
+        r = requests.get(f"{jira_url}/rest/api/3/myself", headers=headers, auth=auth, timeout=10)
+        if r.status_code == 200:
+            return r.json().get("accountId")
+    except Exception:
+        pass
+    return None
+
+def _remove_previous_ai_comments(jira_url: str, task_id: str, marker: str, account_id: str | None):
+    auth, headers = _auth_headers()
+    try:
+        resp = requests.get(
+            f"{jira_url}/rest/api/3/issue/{task_id}/comment?maxResults=100",
+            headers=headers, auth=auth, timeout=20
+        )
+        if resp.status_code != 200:
+            logger.debug(f"[AI Comment] List comments status={resp.status_code}")
+            return
+        data = resp.json()
+        removed = 0
+        for c in data.get("comments", []):
+            cid = c.get("id")
+            author_id = c.get("author", {}).get("accountId")
+            body_text = _extract_text_from_adf(c.get("body"))
+            if marker in body_text and (account_id is None or author_id == account_id):
+                try:
+                    d = requests.delete(
+                        f"{jira_url}/rest/api/3/issue/{task_id}/comment/{cid}",
+                        headers=headers, auth=auth, timeout=15
+                    )
+                    if d.status_code in (204, 200):
+                        removed += 1
+                    else:
+                        logger.debug(f"[AI Comment] Delete {cid} status={d.status_code}")
+                except Exception as e:
+                    logger.debug(f"[AI Comment] Delete {cid} exception: {e}")
+        if removed:
+            logger.info(f"Removed {removed} previous AI comment(s).")
+    except Exception as e:
+        logger.debug(f"[AI Comment] Cleanup failed: {e}")
+
+
 def add_comment(task_id: str, comment: str):
+    """
+    Adds (replaces) AI assessment comment:
+      - Deletes previous comments containing marker (and authored by this user if detectable)
+      - Posts a fresh one.
+    """
     logger.info(f"Adding comment to Jira task {task_id}...")
     try:
         jira_url = os.environ["JIRA_URL"].rstrip("/")
         auth, headers = _auth_headers()
-        api_url = f"{jira_url}/rest/api/2/issue/{task_id}/comment"
+
+        marker = os.getenv("JIRA_AI_COMMENT_TAG", "🤖 AI Assessment")
+        if marker not in comment:
+            comment = f"{marker}\n\n{comment}"
+
+        account_id = _current_account_id()
+        _remove_previous_ai_comments(jira_url, task_id, marker, account_id)
+
+        # Use v3 first, fallback v2
         payload = {"body": comment}
-        resp = requests.post(api_url, json=payload, headers=headers, auth=auth, timeout=15)
-        if resp.status_code == 404:
-            logger.warning(f"Cannot add comment: issue {task_id} not found or no permission (404). Skipping.")
+        for ver in ("3", "2"):
+            api_url = f"{jira_url}/rest/api/{ver}/issue/{task_id}/comment"
+            resp = requests.post(api_url, json=payload, headers=headers, auth=auth, timeout=20)
+            if resp.status_code == 404:
+                logger.warning(f"[Jira] 404 on comment POST v{ver} (issue not visible).")
+                continue
+            if resp.status_code == 403:
+                logger.warning(f"[Jira] 403 on comment POST v{ver} (no Add Comments permission).")
+                continue
+            if resp.status_code not in (201, 200):
+                logger.error(f"[Jira] comment POST v{ver} status={resp.status_code} body={resp.text[:160]}")
+                continue
+            logger.info("✅ Comment added (replaced previous).")
             return
-        resp.raise_for_status()
-        logger.info("✅ Successfully added comment to Jira.")
+        logger.warning("Failed to add comment after trying v3 and v2.")
     except Exception as e:
         logger.error(f"Failed to add comment to Jira task {task_id}. Error: {e}")    

@@ -466,8 +466,8 @@ def assess(
         return
 
     comment_body = (
-        f"🤖 **AI Assessment Complete**\n\n"
-        f"Relevance: **{relevance.score}%**\n\n"
+        f"🤖 *AI Assessment Complete*\n\n"
+        f"Relevance: *{relevance.score}%*\n\n"
         f"Justification: {relevance.justification}"
     )
     jira_client.add_comment(task_id, comment_body)
