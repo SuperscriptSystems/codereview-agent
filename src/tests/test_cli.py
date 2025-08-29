@@ -32,8 +32,8 @@ def test_filter_test_files():
         "src/tests/UserService.Tests.cs": "...",
         "src/spec/component.spec.js": "..."
     }
-    keywords = ["test", "spec"]
-    
+    keywords = ["test", "tests", "spec"]
+
     result = filter_test_files(files_map, keywords)
     
     assert "src/services/UserService.cs" in result

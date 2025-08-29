@@ -72,6 +72,8 @@ def test_extract_dependencies_from_content_python():
     dependencies = git_utils.extract_dependencies_from_content(file_path, file_content)
     assert set(dependencies) == {"os", "utils"}
 
+
+
 def test_find_files_by_names(test_repo):
     repo_path, _, _ = test_repo
     names_to_find = ["IUserService", "UserService"]
@@ -85,7 +87,7 @@ def test_create_annotated_file():
     """
     Tests that the annotation function correctly merges a diff and full content.
     """
-    # Arrange
+
     full_content = "line 1\nline two updated\nline 3"
     diff_content = (
         "--- a/file.txt\n"
@@ -104,6 +106,4 @@ def test_create_annotated_file():
         2 +line two updated
    3    3  line 3"""
     
-    # Assert
-    # Порівнюємо вивід, прибравши зайві пробіли/переноси на початку і в кінці
     assert annotated_file.strip() == expected_output.strip()

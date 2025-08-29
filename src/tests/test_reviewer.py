@@ -35,6 +35,7 @@ def test_run_review_generates_correct_prompt_with_focus(mocker):
     reviewer.run_review(
         changed_files_map={"main.py": "diff content here"},
         final_context_content={"main.py": "full content here"},
+        jira_details="",
         review_rules=custom_rules_to_test,
         llm_config={},
         focus_areas=focus_areas_to_test
@@ -68,6 +69,7 @@ def test_run_review_with_issues_found(mocker):
     review_results = reviewer.run_review(
         changed_files_map={"main.py": "diff"},
         final_context_content={"main.py": "content"},
+        jira_details="",
         review_rules=[],
         llm_config={},
         focus_areas=["LogicError"]
@@ -92,6 +94,7 @@ def test_run_review_handles_malformed_json_response(mocker):
     review_results = reviewer.run_review(
         changed_files_map={"main.py": "diff"},
         final_context_content={"main.py": "content"},
+        jira_details="",
         review_rules=[],
         llm_config={},
         focus_areas=["LogicError"]
@@ -114,6 +117,7 @@ def test_run_review_handles_api_error(mocker):
     review_results = reviewer.run_review(
         changed_files_map={"main.py": "diff"},
         final_context_content={"main.py": "content"},
+        jira_details="",
         review_rules=[],
         llm_config={},
         focus_areas=["LogicError"]
