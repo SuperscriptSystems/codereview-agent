@@ -8,7 +8,6 @@ llm:
     reviewer: 'google/gemini-1.5-pro'
 
 # --- Context building settings ---
-max_context_iterations: 3
 max_context_files: 25
 
 # --- File filtering settings ---
@@ -43,6 +42,10 @@ filtering:
     - '.next'
     - '.pytest_cache'
 
+# Keywords to identify and ignore test files
+
+test_keywords: ['test', 'spec', 'fixture']
+
 # --- Reviewer settings ---
 # Default focus areas if not specified in CLI.
 # If omitted, defaults to "LogicError" only.
@@ -54,6 +57,5 @@ review_focus:
 
 # Custom rules for the reviewer agent.
 review_rules:
-  - 'Pay close attention to potential race conditions in async code.'
   - 'All public functions must have a docstring.'
-  - 'Avoid using magic numbers; define them as constants.'
+  - 'Pay close attention to potential N+1 query problems.'
