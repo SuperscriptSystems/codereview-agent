@@ -147,7 +147,7 @@ Reviews the changes between HEAD~1 and HEAD.
 
 **Focusing the Review**
 
-Use the `bash --focus` flag to narrow the scope of the review.
+Use the `--focus` flag to narrow the scope of the review.
 
         # Check for security issues and logic errors only
         poetry run code-review-agent review --focus Security --focus LogicError
@@ -162,12 +162,12 @@ Use the --trace flag to enable verbose logging.
 
 ## **🔄 CI/CD Integration**
 
-The agent is packaged as a public Docker image: `bash umykhailo/codereviewagent:latest.`
+The agent is packaged as a public Docker image: `umykhailo/codereviewagent:latest.`
 
 ### **Example for Bitbucket Pipelines**
 
 1.  In your target repository's Repository settings -> Repository variables, add the necessary secured variables:
-    The agent is packaged as a public Docker image: `bash LLM_API_KEY, BITBUCKET_APP_USERNAME, BITBUCKET_APP_PASSWORD,` and optionally the `bash JIRA\*` variables.
+    The agent is packaged as a public Docker image: `LLM_API_KEY, BITBUCKET_APP_USERNAME, BITBUCKET_APP_PASSWORD,` and optionally the `JIRA*` variables.
 
 2.  Add a bitbucket-pipelines.yml file to the root of your project:
 
