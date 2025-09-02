@@ -72,7 +72,7 @@ def prioritize_changed_files_with_context_check(
             if not context_req.is_sufficient and context_req.required_additional_files:
                 newly_found_files = git_utils.find_files_by_names(
                     root_dir=repo_path,
-                    file_names=context_req.required_additional_files,
+                    names_to_find=context_req.required_additional_files,
                     ignored_paths=filtering_config.get('ignored_paths', []),
                     ignored_extensions=filtering_config.get('ignored_extensions', [])
                 )
