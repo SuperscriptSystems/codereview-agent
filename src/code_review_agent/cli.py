@@ -14,13 +14,22 @@ from . import jira_client
 from . import relevance_assessor
 from .models import IssueType, CodeIssue
 
-def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str]]:
+def prioritize_changed_files_with_context_check(
+    changed_files_map: Dict[str, str],
+    commit_messages: str,
+    jira_details: str,
+    final_context_content: Dict[str, str],
+    full_project_structure: str,
+    llm_config: dict,
+    repo_path: str,
+    filtering_config: dict,
+    max_context_files: int = 25
+) -> List[str]:
     """
-    Groups changed files into priority tiers.
-    Tier 1: Interfaces, DTOs, Core business logic.
-    Tier 2: Controllers, UI components.
-    Tier 3: Configs, styles, docs.
+    Iteratively adds files by priority tiers, stopping when context is sufficient.
+    Returns list of files that should be reviewed with adequate context.
     """
+    # Create priority tiers
     tier1, tier2, tier3 = [], [], []
     for path in changed_files_map.keys():
         path_lower = path.lower()
@@ -31,7 +40,71 @@ def prioritize_changed_files(changed_files_map: Dict[str, str]) -> List[List[str
             tier2.append(path)
         else:
             tier3.append(path)
-    return [tier1, tier2, tier3]
+    
+    files_to_review = []
+    tiers = [tier1, tier2, tier3]
+    
+    for tier_idx, tier in enumerate(tiers):
+        if not tier:
+            continue
+            
+        logging.info(f"\n--- Checking Priority Tier {tier_idx + 1} ({len(tier)} files) ---")
+        
+        for file_path in tier:
+            files_to_review.append(file_path)
+            diff_content = changed_files_map[file_path]
+            
+            logging.info(f"   - Analyzing context sufficiency for: {file_path}")
+            
+            # Check if current context is sufficient for accumulated files
+            context_req = context_builder.determine_context(
+                diff=diff_content,
+                commit_messages=commit_messages,
+                changed_files_content={fp: final_context_content.get(fp, '') for fp in files_to_review},
+                jira_details=jira_details,
+                full_context_content=final_context_content,
+                file_structure=full_project_structure,
+                current_context_files=list(final_context_content.keys()),
+                llm_config=llm_config,
+            )
+            
+            # Add any additional required files to context
+            if not context_req.is_sufficient and context_req.required_additional_files:
+                newly_found_files = git_utils.find_files_by_names(
+                    repo_path=repo_path,
+                    file_names=context_req.required_additional_files,
+                    ignored_paths=filtering_config.get('ignored_paths', []),
+                    ignored_extensions=filtering_config.get('ignored_extensions', [])
+                )
+                
+                for new_file in newly_found_files:
+                    if new_file not in final_context_content and len(final_context_content) < max_context_files:
+                        final_context_content[new_file] = git_utils.get_file_content(repo_path, new_file)
+                        logging.info(f"   - Added context file: {new_file}")
+            
+            # Check if context is now sufficient
+            if context_req.is_sufficient:
+                logging.info(f"   ✅ Context is sufficient after processing {file_path}")
+                continue
+        
+        # After processing entire tier, check if we have sufficient context for all files so far
+        all_diffs = "\n".join([changed_files_map[fp] for fp in files_to_review])
+        overall_context_req = context_builder.determine_context(
+            diff=all_diffs,
+            commit_messages=commit_messages,
+            changed_files_content={fp: final_context_content.get(fp, '') for fp in files_to_review},
+            jira_details=jira_details,
+            full_context_content=final_context_content,
+            file_structure=full_project_structure,
+            current_context_files=list(final_context_content.keys()),
+            llm_config=llm_config,
+        )
+        
+        if overall_context_req.is_sufficient:
+            logging.info(f"🎯 Context is sufficient after Tier {tier_idx + 1}. Skipping remaining tiers.")
+            break
+    
+    return files_to_review
 
 def _get_task_id_from_git_info(commit_messages) -> str | None:
     """
@@ -261,7 +334,6 @@ def run_review_logic(
 
     logging.info("🧠 Performing smart dependency analysis to pre-populate context...")
     
-    file_tiers = prioritize_changed_files(changed_files_map)
     
     final_context_content = dict(changed_files_content)
     
@@ -271,55 +343,31 @@ def run_review_logic(
         filtering_config.get('ignored_extensions', [])
     )
 
+    files_to_review = prioritize_changed_files_with_context_check(
+        changed_files_map=changed_files_map,
+        commit_messages=commit_messages,
+        jira_details=jira_details_text,
+        final_context_content=final_context_content,
+        full_project_structure=full_project_structure,
+        llm_config=llm_config,
+        repo_path=repo_path,
+        filtering_config=filtering_config,
+        max_context_files=max_context_files
+    )
 
-    for i, tier in enumerate(file_tiers):
-        if not tier: continue
-        logging.info(f"\n--- Building context for Priority Tier {i+1} ({len(tier)} files) ---")
-
-        for file_path in tier:
-            diff_content = changed_files_map[file_path]
-            logging.info(f"   - Analyzing dependencies for: {file_path}")
-            
-            context_req = context_builder.determine_context(
-                diff=diff_content,
-                commit_messages=commit_messages,
-                changed_files_content={file_path: changed_files_content[file_path]},
-                jira_details=jira_details_text,
-                full_context_content=final_context_content,
-                file_structure=full_project_structure,
-                current_context_files=list(final_context_content.keys()),
-                llm_config=llm_config,
-            )
-            
-            if context_req.is_sufficient or not context_req.required_additional_files:
-                continue
-            
-            newly_found_files = git_utils.find_files_by_names(
-                repo_path, 
-                context_req.required_additional_files,
-                ignored_paths=filtering_config.get('ignored_paths', []),
-                ignored_extensions=filtering_config.get('ignored_extensions', [])
-            )
-            
-            new_files_to_add = [f for f in newly_found_files if f not in final_context_content]
-
-            if new_files_to_add:
-                logging.info(f"   - Adding {len(new_files_to_add)} new files to context: {new_files_to_add}")
-                for new_file in new_files_to_add:
-                    final_context_content[new_file] = git_utils.get_file_content(repo_path, new_file)
-
-                if len(final_context_content) > max_context_files:
-                    logging.warning("⚠️ Max context files limit reached. Stopping context building.")
-                    break
-        if len(final_context_content) > max_context_files: break
-
+    filtered_changed_files_map = {
+        file_path: changed_files_map[file_path] 
+        for file_path in files_to_review 
+        if file_path in changed_files_map
+    }
 
     logging.info("\n--- Starting Code Review Phase ---")
     logging.info(f"🎯 Review focus: {', '.join(final_focus_areas)}")
+    logging.info(f"📁 Reviewing {len(filtered_changed_files_map)} files with sufficient context")
 
 
     review_results = reviewer.run_review(
-        changed_files_map=changed_files_map,
+        changed_files_map=filtered_changed_files_map,
         final_context_content=final_context_content,
         jira_details=jira_details_text,
         review_rules=config.get('review_rules', []),
