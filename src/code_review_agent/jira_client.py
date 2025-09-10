@@ -4,6 +4,8 @@ import logging
 import requests
 from requests.auth import HTTPBasicAuth
 
+from src.code_review_agent.models import MergeSummary
+
 logger = logging.getLogger(__name__)
 
 def find_task_id(text: str) -> str | None:
@@ -190,3 +192,32 @@ def add_comment(task_id: str, comment: str):
         logger.warning("Failed to add comment after trying v3 and v2.")
     except Exception as e:
         logger.error(f"Failed to add comment to Jira task {task_id}. Error: {e}")    
+
+
+def add_assessment_comment(task_id: str, summary: MergeSummary):
+    """
+    Formats the structured summary into a string and then calls the robust
+    add_comment function to publish it.
+    """
+    logger.info(f"Formatting assessment summary for Jira task {task_id}...")
+
+    comment_body = ""
+    comment_body += f"*{summary.commit_summary}*\n\n"
+    comment_body += f"h3. Task Relevance Score: {summary.relevance_score}%\n"
+    comment_body += f"_{summary.relevance_justification}_\n\n"
+    
+    if summary.db_tables_created or summary.db_tables_modified:
+        comment_body += "h3. Database Changes:\n"
+        for table in summary.db_tables_created:
+            comment_body += f"* (/) *Created Table:* `{table}`\n"
+        for table in summary.db_tables_modified:
+            comment_body += f"* (i) *Modified Table:* `{table}`\n"
+
+    if summary.api_endpoints_added or summary.api_endpoints_modified:
+        comment_body += "\nh3. API Endpoint Changes:\n"
+        for endpoint in summary.api_endpoints_added:
+            comment_body += f"* (/) *Added:* `{endpoint}`\n"
+        for endpoint in summary.api_endpoints_modified:
+            comment_body += f"* (i) *Modified:* `{endpoint}`\n"
+            
+    add_comment(task_id, comment_body)

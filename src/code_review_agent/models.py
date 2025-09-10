@@ -46,3 +46,15 @@ class TaskRelevance(BaseModel):
         ...,
         description="A brief, one-sentence justification for the score."
     )
+
+class MergeSummary(BaseModel):
+    relevance_score: int = Field(..., description="A score from 0 to 100 representing how related the code change is to the Jira task.")
+    relevance_justification: str = Field(..., description="A brief justification for the relevance score.")
+    
+    db_tables_created: List[str] = Field(default=[], description="List of new database tables created.")
+    db_tables_modified: List[str] = Field(default=[], description="List of existing database tables modified (e.g., added/removed columns).")
+    
+    api_endpoints_added: List[str] = Field(default=[], description="List of new API endpoints added (e.g., 'GET /api/users').")
+    api_endpoints_modified: List[str] = Field(default=[], description="List of modified API endpoints.")
+    
+    commit_summary: str = Field(..., description="A brief, high-level summary of all commit messages.")    

@@ -8,10 +8,12 @@ from dotenv import load_dotenv
 from unidiff import PatchSet
 import io
 
+
 from . import bitbucket_client, github_client
 from . import git_utils, context_builder, reviewer
 from . import jira_client
-from . import relevance_assessor
+from . import summarizer
+
 from .models import IssueType, CodeIssue
 
 def prioritize_changed_files_with_context_check(
@@ -495,29 +497,21 @@ def assess(
         logging.info("No task ID found; skipping relevance assessment.")
         return
 
-    logging.info("\n--- Assessing Task Relevance ---")
-    relevance = relevance_assessor.assess_relevance(
+    logging.info("\n--- Summarizing changes for Jira ---")
+    
+    summary = summarizer.summarize_changes_for_jira(
         jira_details=jira_details_text,
         commit_messages=commit_messages,
         diff_text=diff_text,
-        review_summary="Code has been merged.",
         llm_config=load_config(repo_path).get('llm', {})
     )
 
-    if not relevance:
-        logging.info("Relevance assessment failed or returned no result.")
+    if not summary:
+        logging.warning("Summarizer agent failed to produce a result. Skipping Jira comment.")
         return
 
-    logging.info(f"Relevance score: {relevance.score}%")
-    if not task_details:
-        logging.info("Skip commenting (issue inaccessible).")
-        return
 
-    comment_body = (
-        f"Relevance: *{relevance.score}%*\n\n"
-        f"Justification: {relevance.justification}"
-    )
-    jira_client.add_comment(task_id, comment_body)
+    jira_client.add_assessment_comment(task_id, summary)
 
 
 def main():
