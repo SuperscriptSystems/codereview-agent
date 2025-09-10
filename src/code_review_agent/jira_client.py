@@ -4,7 +4,7 @@ import logging
 import requests
 from requests.auth import HTTPBasicAuth
 
-from src.code_review_agent.models import MergeSummary
+from .models import MergeSummary
 
 logger = logging.getLogger(__name__)
 
