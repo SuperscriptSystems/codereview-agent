@@ -14,7 +14,7 @@ def summarize_changes_for_jira(
 ) -> MergeSummary | None:
     
     client = get_client(llm_config)
-    model = llm_config.get('models', {}).get('summarizer', 'google/gemini-flash-1.5')
+    model = llm_config.get('models', {}).get('summarizer', 'google/gemini-pro-1.5')
 
     system_prompt = """
     You are an expert AI software analyst. Your task is to analyze a git diff and commit messages to produce a structured summary for a Jira ticket.
