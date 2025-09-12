@@ -56,7 +56,8 @@ def summarize_changes_for_jira(
             ],
             temperature=0
         )
-        raw_response_text = response.choices.message.content.strip()
+        
+        raw_response_text = response.choices[0].message.content.strip()
         
         try:
             parsed_json = json.loads(raw_response_text, strict=False)
