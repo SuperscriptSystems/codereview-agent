@@ -451,13 +451,16 @@ def assess(
     logging.info("🔍 Gathering data for Jira assessment...")
     commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
 
+    logging.info(f"📊 Generated structured diff summary")
     structured_diff_summary = git_utils.get_structured_diff_summary(repo_path, base_ref, head_ref)
-    logging.info(f"📊 Generated structured diff summary: {structured_diff_summary}")
-    # Diagnostics
-    logging.info(f"[Diag] BITBUCKET_BRANCH={os.environ.get('BITBUCKET_BRANCH')}")
-    logging.info(f"[Diag] BITBUCKET_COMMIT_MESSAGE={os.environ.get('BITBUCKET_COMMIT_MESSAGE')!r}")
-    if isinstance(commit_messages, (list, tuple)):
-        logging.debug(f"[Diag] Collected {len(commit_messages)} commit messages in range.")
+    
+
+    if "error" in structured_diff_summary:
+        logging.error("Failed to generate structured diff summary. Skipping Jira assessment.")
+        return
+
+
+    logging.info("\n--- Summarizing changes for Jira ---")
 
     # Manual override
     manual_task = os.environ.get("JIRA_TASK_ID")

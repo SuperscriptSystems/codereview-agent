@@ -24,7 +24,55 @@ def _query_tree(language, tree, query_string):
     captures = query.captures(tree.root_node)
     return list(set(node.text.decode('utf8') for node, _ in captures))
 
+def extract_dependencies_from_content(file_path: str, file_content: str) -> List[str]:
+    """
+    Extracts dependencies using Tree-sitter for universal language analysis.
+    """
+    file_extension = os.path.splitext(file_path)
+    
+    if file_extension not in LANGUAGES:
+        return []
 
+    language = LANGUAGES[file_extension]
+    parser = Parser()
+    parser.set_language(language)
+    
+    tree = parser.parse(bytes(file_content, "utf8"))
+
+    queries = {
+        '.cs': """
+            (using_directive (name_colon_qualified_name) @import) ; for C# usings
+            (class_declaration base_list: (base_list (simple_base_type) @base)) ; for inheritance
+        """,
+        '.py': """
+            (import_statement name: (dotted_name) @import)
+            (from_import_statement module_name: (dotted_name) @import)
+        """,
+        '.ts': "(import_statement source: (string) @import)",
+        '.tsx': "(import_statement source: (string) @import)",
+        '.js': "(import_statement source: (string) @import)",
+    }
+
+    query_string = queries.get(file_extension, "")
+    if not query_string:
+        return []
+
+    raw_imports = _query_tree(language, tree, query_string)
+    
+
+    dependencies = set()
+    for imp in raw_imports:
+        clean_dep = imp.strip("'\"").strip()
+
+        final_part = os.path.basename(clean_dep)
+
+        final_part = final_part.split('.')[-1]
+
+        final_part = final_part.split(',')[0].strip()
+        
+        dependencies.add(final_part)
+        
+    return list(dependencies)
 
 def get_diff(repo_path: str, base_ref: str, head_ref: str) -> str:
     """Calculates the diff between two refs using the merge base strategy."""
@@ -185,36 +233,26 @@ def create_annotated_file(full_content: str, diff_content: str) -> str:
     
 
 def get_structured_diff_summary(repo_path: str, base_ref: str, head_ref: str) -> dict:
-    """
-    Analyzes the diff and returns a structured summary of changes.
-    """
+    """Analyzes the diff and returns a structured summary of changes."""
     summary = {
-        "files_added": [],
-        "files_deleted": [],
-        "files_renamed": [],
-        "files_modified": [],
-        "total_insertions": 0,
-        "total_deletions": 0,
+        "files_added": [], "files_deleted": [], "files_renamed": [],
+        "files_modified": [], "total_insertions": 0, "total_deletions": 0,
     }
     try:
         repo = git.Repo(repo_path, search_parent_directories=True)
         base_commit = repo.commit(base_ref)
         head_commit = repo.commit(head_ref)
 
-        diff_index = base_commit.diff(head_commit)
+        diff_output = repo.git.diff(base_commit, head_commit, '--numstat')
 
-        for diff in diff_index:
-            summary["total_insertions"] += diff.a_blob.size if diff.change_type == 'A' else diff.diff.count(b'+')
-            summary["total_deletions"] += diff.a_blob.size if diff.change_type == 'D' else diff.diff.count(b'-')
-
-            if diff.new_file:
-                summary["files_added"].append(diff.b_path)
-            elif diff.deleted_file:
-                summary["files_deleted"].append(diff.a_path)
-            elif diff.renamed_file:
-                summary["files_renamed"].append(f"{diff.a_path} -> {diff.b_path}")
-            else: # Modified
-                summary["files_modified"].append(diff.a_path)
+        for line in diff_output.splitlines():
+            parts = line.split('\t')
+            if len(parts) == 3:
+                insertions, deletions, path = parts
+                summary["total_insertions"] += int(insertions)
+                summary["total_deletions"] += int(deletions)
+                if path not in summary["files_modified"]:
+                     summary["files_modified"].append(path)
         
         return summary
     except Exception as e:
