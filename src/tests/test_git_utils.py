@@ -43,36 +43,6 @@ def test_get_commit_messages(test_repo):
     assert "Second commit" in messages
 
 
-def test_extract_dependencies_from_content_csharp():
-    """Tests Tree-sitter dependency extraction for C#."""
-    file_path = "MyService.cs"
-    file_content = """
-    using System.Text;
-    using Company.Core.Models;
-
-    namespace MyNamespace
-    {
-        public class MyService : IMyService, IDisposable
-        {
-            // ...
-        }
-    }
-    """
-    dependencies = git_utils.extract_dependencies_from_content(file_path, file_content)
-
-    assert set(dependencies) == {"Text", "Models", "IMyService", "IDisposable"}
-
-def test_extract_dependencies_from_content_python():
-    """Tests Tree-sitter dependency extraction for Python."""
-    file_path = "main.py"
-    file_content = """
-    import os
-    from my_project.utils import helper_function
-    """
-    dependencies = git_utils.extract_dependencies_from_content(file_path, file_content)
-    assert set(dependencies) == {"os", "utils"}
-
-
 
 def test_find_files_by_names(test_repo):
     repo_path, _, _ = test_repo

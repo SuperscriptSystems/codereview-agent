@@ -336,7 +336,6 @@ def run_review_logic(
 
     logging.info("🧠 Performing smart dependency analysis to pre-populate context...")
     
-    
     final_context_content = dict(changed_files_content)
     
     full_project_structure = git_utils.get_file_structure(
@@ -451,8 +450,9 @@ def assess(
         
     logging.info("🔍 Gathering data for Jira assessment...")
     commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
-    diff_text = git_utils.get_diff(repo_path, base_ref, head_ref)
 
+    structured_diff_summary = git_utils.get_structured_diff_summary(repo_path, base_ref, head_ref)
+    logging.info(f"📊 Generated structured diff summary: {structured_diff_summary}")
     # Diagnostics
     logging.info(f"[Diag] BITBUCKET_BRANCH={os.environ.get('BITBUCKET_BRANCH')}")
     logging.info(f"[Diag] BITBUCKET_COMMIT_MESSAGE={os.environ.get('BITBUCKET_COMMIT_MESSAGE')!r}")
@@ -502,14 +502,13 @@ def assess(
     summary = summarizer.summarize_changes_for_jira(
         jira_details=jira_details_text,
         commit_messages=commit_messages,
-        diff_text=diff_text,
+        diff_summary=structured_diff_summary,
         llm_config=load_config(repo_path).get('llm', {})
     )
 
     if not summary:
         logging.warning("Summarizer agent failed to produce a result. Skipping Jira comment.")
         return
-
 
     jira_client.add_assessment_comment(task_id, summary)
 
