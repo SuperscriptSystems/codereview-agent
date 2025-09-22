@@ -451,16 +451,6 @@ def assess(
     logging.info("🔍 Gathering data for Jira assessment...")
     commit_messages = git_utils.get_commit_messages(repo_path, base_ref, head_ref)
 
-    logging.info(f"📊 Generated structured diff summary")
-    structured_diff_summary = git_utils.get_structured_diff_summary(repo_path, base_ref, head_ref)
-    
-
-    if "error" in structured_diff_summary:
-        logging.error("Failed to generate structured diff summary. Skipping Jira assessment.")
-        return
-
-
-    logging.info("\n--- Summarizing changes for Jira ---")
 
     # Manual override
     manual_task = os.environ.get("JIRA_TASK_ID")
@@ -498,6 +488,13 @@ def assess(
             logging.warning(f"Found Jira task ID '{task_id}', but could not fetch its details (404 or no permission). Proceeding without description.")
     else:
         logging.info("No task ID found; skipping relevance assessment.")
+        return
+
+    logging.info("📊 Generating structured diff summary...")
+    structured_diff_summary = git_utils.get_structured_diff_summary(repo_path, base_ref, head_ref)
+
+    if "error" in structured_diff_summary:
+        logging.error("Failed to generate structured diff summary. Skipping Jira assessment.")
         return
 
     logging.info("\n--- Summarizing changes for Jira ---")

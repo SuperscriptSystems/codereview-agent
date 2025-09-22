@@ -233,27 +233,20 @@ def create_annotated_file(full_content: str, diff_content: str) -> str:
     
 
 def get_structured_diff_summary(repo_path: str, base_ref: str, head_ref: str) -> dict:
-    """Analyzes the diff and returns a structured summary of changes."""
-    summary = {
-        "files_added": [], "files_deleted": [], "files_renamed": [],
-        "files_modified": [], "total_insertions": 0, "total_deletions": 0,
-    }
+    """Analyzes the diff and returns a structured summary using `git diff --numstat`."""
+    summary = { "files_changed": [] }
     try:
         repo = git.Repo(repo_path, search_parent_directories=True)
-        base_commit = repo.commit(base_ref)
-        head_commit = repo.commit(head_ref)
-
-        diff_output = repo.git.diff(base_commit, head_commit, '--numstat')
-
+        diff_output = repo.git.diff(base_ref, head_ref, '--numstat')
         for line in diff_output.splitlines():
             parts = line.split('\t')
             if len(parts) == 3:
                 insertions, deletions, path = parts
-                summary["total_insertions"] += int(insertions)
-                summary["total_deletions"] += int(deletions)
-                if path not in summary["files_modified"]:
-                     summary["files_modified"].append(path)
-        
+                summary["files_changed"].append({
+                    "path": path,
+                    "insertions": int(insertions),
+                    "deletions": int(deletions)
+                })
         return summary
     except Exception as e:
         logger.error(f"Could not get structured diff summary: {e}", exc_info=True)

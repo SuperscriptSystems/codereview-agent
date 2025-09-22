@@ -17,8 +17,7 @@ def summarize_changes_for_jira(
     model = llm_config.get('models', {}).get('summarizer', 'google/gemini-pro-1.5')
 
     system_prompt = """
-    You are an expert AI software analyst. Your task is to analyze a structured summary of code changes and produce a high-level summary for a Jira ticket.
-    DO NOT analyze the code itself, only the provided metadata.
+    You are an expert AI software analyst. Your task is to analyze metadata about code changes and produce a high-level summary for a Jira ticket.
     
     CRITICAL OUTPUT FORMATTING RULE:
     Your entire response MUST be a single, valid JSON object that adheres to the `MergeSummary` schema.
@@ -29,19 +28,22 @@ def summarize_changes_for_jira(
     user_prompt = f"""
     Please analyze the following data and provide a structured summary.
 
+    **Jira Task Details:**
+    ```
     {jira_details}
+    ```
 
     **Commit Messages:**
     ```
     {commit_messages}
     ```
 
-    **Structured Summary of Code Changes:**
+    **Structured Summary of Code Changes (file paths, insertions, deletions):**
     ```json
     {diff_summary_text}
     ```
 
-    Based on this metadata, provide your assessment.
+    Based on all this metadata, provide your assessment.
     Return your findings as a raw JSON object string.
     """
     
@@ -54,7 +56,6 @@ def summarize_changes_for_jira(
             ],
             temperature=0
         )
-        
         raw_response_text = response.choices[0].message.content.strip()
         
         try:
@@ -62,6 +63,7 @@ def summarize_changes_for_jira(
             return MergeSummary(**parsed_json)
         except (json.JSONDecodeError, ValidationError) as e:
             logger.warning(f"Failed to parse summary response. Error: {e}")
+            logger.debug(f"Problematic response was: '{raw_response_text}'")
             return None
             
     except Exception as e:
