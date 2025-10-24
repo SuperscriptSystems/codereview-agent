@@ -14,7 +14,7 @@ def summarize_changes_for_jira(
 ) -> MergeSummary | None:
     
     client = get_client(llm_config)
-    model = llm_config.get('models', {}).get('summarizer', 'google/gemini-pro-1.5')
+    model = llm_config.get('models', {}).get('summarizer', 'gpt-5-mini')
 
     system_prompt = """
     You are an expert AI software analyst. Your task is to analyze metadata about code changes and produce a high-level summary for a Jira ticket.
