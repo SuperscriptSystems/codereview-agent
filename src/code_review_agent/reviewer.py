@@ -190,7 +190,6 @@ def run_review(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.0
             )
             
             raw_response_text = response.choices[0].message.content.strip()
