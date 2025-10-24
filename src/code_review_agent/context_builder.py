@@ -18,7 +18,7 @@ def determine_context(
 ) -> ContextRequirements:
     
     client = get_client(llm_config)
-    model = llm_config.get('models', {}).get('context_builder', 'google/gemini-1.5-flash')
+    model = llm_config.get('models', {}).get('context_builder', 'gpt-5-mini')
     
     system_prompt = """
     You are an expert AI software architect. Your sole task is to determine the MINIMAL SUFFICIENT CONTEXT for a code review.
