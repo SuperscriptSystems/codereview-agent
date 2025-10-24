@@ -71,7 +71,7 @@ def run_review(
 ) -> Dict[str, ReviewResult]:
     
     client = get_client(llm_config)
-    model = llm_config.get('models', {}).get('reviewer', 'google/gemini-pro-1.5')
+    model = llm_config.get('models', {}).get('reviewer', 'google/gemini-1.5-pro')
 
     focus_prompt_part = "Your primary focus for this review should be on the following areas: "
     focus_prompt_part += ", ".join(focus_areas) + "."
