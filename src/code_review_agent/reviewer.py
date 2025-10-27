@@ -147,7 +147,9 @@ def run_review(
     5.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Your feedback must be actionable for the developer **right now**.
     6.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
     7.  **AVOID REDUNDANT SUGGESTIONS:** DO NOT suggest a change that is identical to the existing code.
-    8.  **RESPECT GUARD CLAUSES:** If code is inside a `if (obj != null)` block, DO NOT report a potential `NullReferenceException`.
+    8.  **NULL REFERENCE SAFETY:** Respect null-safety mechanisms. DO NOT report potential `NullReferenceException` issues if:
+        - The code is inside an explicit null-check block (e.g., `if (obj != null)`).
+        - For .NET code, modern nullability syntax is used (e.g., nullable reference types `?` or the null-forgiving operator `!`).
     9.  {custom_rules_instruction}
 
 
