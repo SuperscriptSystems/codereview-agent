@@ -2,7 +2,6 @@ import json
 import ast
 import logging
 from typing import Dict, List, Any
-import concurrent.futures
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
 from .llm_client import get_client
@@ -165,93 +164,61 @@ def run_review(
 
     review_results = {}
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_file = {
-            executor.submit(
-                _process_single_file,
-                file_path,
-                diff_content,
-                final_context_content,
-                git_utils,
-                jira_details,
-                system_prompt,
-                client,
-                model
-            ): file_path
-            for file_path, diff_content in changed_files_map.items()
-        }
+    for file_path, diff_content in changed_files_map.items():
+        logger.info(f"Reviewing file: {file_path}")
+        full_file_content = final_context_content.get(file_path, "File content not available.")
 
-        for future in concurrent.futures.as_completed(future_to_file):
-            file_path = future_to_file[future]
-            try:
-                result = future.result()
-                review_results[file_path] = result
-            except Exception as e:
-                logger.error(f"Error processing file {file_path}: {e}", exc_info=True)
-                review_results[file_path] = ReviewResult(issues=[])
-
-    return review_results
-
-def _process_single_file(
-    file_path: str,
-    diff_content: str,
-    final_context_content: Dict[str, str],
-    git_utils_module,
-    jira_details: str,
-    system_prompt: str,
-    client,
-    model: str
-) -> ReviewResult:
-    logger.info(f"Reviewing file: {file_path}")
-    full_file_content = final_context_content.get(file_path, "File content not available.")
-
-    annotated_content = git_utils_module.create_annotated_file(full_file_content, diff_content)
-    
-    user_prompt = f"""
-    {jira_details}
-    Please review the following annotated file: `{file_path}`.
-    Return your findings as a raw JSON array string.
-
-    **Annotated File Content for `{file_path}`:**
-    ```
-    {annotated_content}
-    ```
-    """
-
-    try:
-        logger.debug(f"--- System Prompt for {file_path} ---\n{system_prompt}")
-        logger.debug(f"--- User Prompt for {file_path} ---\n{user_prompt}")
-
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        annotated_content = git_utils.create_annotated_file(full_file_content, diff_content)
         
-        raw_response_text = response.choices[0].message.content.strip()
-        logger.debug(f"Raw LLM response for {file_path}:\n{raw_response_text}")
+        user_prompt = f"""
+        {jira_details}
+        Please review the following annotated file: `{file_path}`.
+        Return your findings as a raw JSON array string.
+
+        **Annotated File Content for `{file_path}`:**
+        ```
+        {annotated_content}
+        ```
+        """
+
 
         try:
-            start_index = raw_response_text.find('[')
-            end_index = raw_response_text.rfind(']')
+            logger.debug(f"--- System Prompt for {file_path} ---\n{system_prompt}")
+            logger.debug(f"--- User Prompt for {file_path} ---\n{user_prompt}")
 
-            if start_index != -1 and end_index != -1 and end_index > start_index:
-                json_str_cleaned = raw_response_text[start_index : end_index + 1]
-                
-                parsed_json = robust_json_parser(json_str_cleaned)
-                
-                normalized_issues = [_normalize_issue(issue) for issue in parsed_json]
-                return ReviewResult(issues=normalized_issues)
-            else:
-                logger.info(f"No valid JSON array found for {file_path}. Assuming no issues.")
-                return ReviewResult(issues=[])
-        except (ValueError, SyntaxError, ValidationError) as e:
-            logger.warning(f"Failed to parse/validate LLM response for {file_path}. Error: {e}")
-            logger.debug(f"Problematic response was: '{raw_response_text}'")
-            return ReviewResult(issues=[])
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            
+            raw_response_text = response.choices[0].message.content.strip()
+            logger.debug(f"Raw LLM response for {file_path}:\n{raw_response_text}")
 
-    except Exception as e:
-        logger.error(f"Critical error during LLM call for {file_path}: {e}", exc_info=True)
-        return ReviewResult(issues=[])
+            try:
+                start_index = raw_response_text.find('[')
+                end_index = raw_response_text.rfind(']')
+
+                if start_index != -1 and end_index != -1 and end_index > start_index:
+                    json_str_cleaned = raw_response_text[start_index : end_index + 1]
+                    
+                    parsed_json = robust_json_parser(json_str_cleaned)
+                    
+                    normalized_issues = [_normalize_issue(issue) for issue in parsed_json]
+                    validated_result = ReviewResult(issues=normalized_issues)
+                    review_results[file_path] = validated_result
+                else:
+                    logger.info(f"No valid JSON array found for {file_path}. Assuming no issues.")
+                    raise json.JSONDecodeError("Could not find JSON array brackets `[]` in the response.", raw_response_text, 0)
+            except (ValueError, SyntaxError, ValidationError) as e:
+                logger.warning(f"Failed to parse/validate LLM response for {file_path}. Error: {e}")
+                logger.debug(f"Problematic response was: '{raw_response_text}'")
+                review_results[file_path] = ReviewResult(issues=[])
+
+        except Exception as e:
+            logger.error(f"Critical error during LLM call for {file_path}: {e}", exc_info=True)
+            review_results[file_path] = ReviewResult(issues=[])
+
+    return review_results
