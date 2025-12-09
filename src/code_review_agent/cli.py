@@ -179,6 +179,29 @@ def filter_test_files(
             
     return files_for_review_map
 
+def filter_files_by_pattern(
+    changed_files_map: Dict[str, str], 
+    ignored_patterns: List[str]
+) -> Dict[str, str]:
+    """Filters out files matching specified filename patterns."""
+    if not ignored_patterns:
+        return changed_files_map
+        
+    logging.info("🔍 Filtering out files matching ignored patterns...")
+    
+    files_for_review_map = {}
+    ignored_patterns_set = set(ignored_patterns)
+
+    for path, diff in changed_files_map.items():
+        filename = os.path.basename(path)
+        
+        if not any(pattern in filename for pattern in ignored_patterns_set):
+            files_for_review_map[path] = diff
+        else:
+            logging.info(f"   - Ignoring file matching pattern: {path}")
+            
+    return files_for_review_map
+
 app = typer.Typer(add_completion=False, invoke_without_command=True)
 
 
@@ -209,7 +232,8 @@ def load_config(repo_path: str) -> dict:
         typer.secho("Info: .codereview.yml not found. Using defaults.", fg=typer.colors.BLUE)
         return {
             'filtering': {'ignored_extensions': ['.dll', '.so', '.exe', '.png', '.jpg', '.jpeg', '.svg', '.gif', '.min.js', '.lock', '.zip', '.o', '.a', '.obj', '.lib', '.pdb'], 
-            'ignored_paths': [ 'node_modules', 'venv', '.venv', 'dist', 'build', 'target', '.gitignore', '.git', '__pycache__', 'dist', 'build', 'target', '.next', '.pytest_cache']},
+            'ignored_paths': [ 'node_modules', 'venv', '.venv', 'dist', 'build', 'target', '.gitignore', '.git', '__pycache__', 'dist', 'build', 'target', '.next', '.pytest_cache'],
+            'ignored_patterns': ['Designer.cs']},
             'review_rules': [],
             'llm': {}
         }
@@ -298,6 +322,9 @@ def run_review_logic(
     
     test_keywords = filtering_config.get('test_keywords', ['test', 'spec'])
     changed_files_map = filter_test_files(changed_files_map, test_keywords)
+
+    ignored_patterns = filtering_config.get('ignored_patterns', [])
+    changed_files_map = filter_files_by_pattern(changed_files_map, ignored_patterns)
 
     is_bitbucket_pr = "BITBUCKET_PR_ID" in os.environ
     is_github_pr = "GITHUB_ACTIONS" in os.environ and "GITHUB_PR_NUMBER" in os.environ

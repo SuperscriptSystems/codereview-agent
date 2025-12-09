@@ -42,6 +42,9 @@ filtering:
     - '.next'
     - '.pytest_cache'
 
+  ignored_patterns:
+    - 'Designer.cs'
+
 # Keywords to identify and ignore test files
 
 test_keywords: ['test', 'spec', 'fixture']
