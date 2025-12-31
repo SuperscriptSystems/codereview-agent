@@ -132,6 +132,8 @@ def get_changed_files_from_diff(diff_text: str) -> List[str]:
 
 def get_file_content(repo_path: str, file_path: str) -> str:
     """Gets the full content of a specific file."""
+    if 'null' in file_path:
+        return ""
     full_path = os.path.join(repo_path, file_path)
     try:
         with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -203,34 +205,191 @@ def get_file_structure_from_paths(paths: List[str]) -> str:
     return "\n".join(structure)
 
 
+def cleanup_code_context(file_path: str, content: str, diff_content: str) -> str:
+    """
+    Cleans up the file content to keep only relevant parts for the LLM.
+    For C#, it removes bodies of methods that are neither changed nor used in changed methods.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext != '.cs':
+        return content
+
+    try:
+        language = LANGUAGES.get('.cs')
+        if not language:
+            return content
+        
+        parser = Parser()
+        parser.set_language(language)
+        tree = parser.parse(bytes(content, "utf8"))
+        
+        # 1. Identity changed lines
+        changed_lines = set()
+        if diff_content:
+            patch = PatchSet(io.StringIO(diff_content))
+            for pf in patch:
+                for hunk in pf:
+                    for line in hunk:
+                        if line.is_added or line.is_removed:
+                            if line.target_line_no: changed_lines.add(line.target_line_no)
+                            if line.source_line_no: changed_lines.add(line.source_line_no)
+
+        # 2. Find all methods
+        query_methods = language.query("(method_declaration) @method")
+        method_nodes = query_methods.captures(tree.root_node)
+        
+        methods = []
+        changed_methods = []
+        
+        for node, _ in method_nodes:
+            start_line = node.start_point[0] + 1
+            end_line = node.end_point[0] + 1
+            
+            method_info = {
+                'node': node,
+                'start_line': start_line,
+                'end_line': end_line,
+                'name': '',
+                'body_node': None
+            }
+            
+            # Find name and body
+            for child in node.children:
+                if child.type == 'identifier':
+                    method_info['name'] = content[child.start_byte:child.end_byte]
+                if child.type == 'block':
+                    method_info['body_node'] = child
+            
+            methods.append(method_info)
+            
+            # Check if changed
+            if any(l in changed_lines for l in range(start_line, end_line + 1)):
+                changed_methods.append(method_info)
+
+        # 3. Find used methods in changed methods
+        used_method_names = set()
+        query_calls = language.query("""
+            (invocation_expression (identifier) @name)
+            (invocation_expression (member_access_expression name: (identifier) @name))
+        """)
+        
+        for ch_method in changed_methods:
+            calls = query_calls.captures(ch_method['node'])
+            for call_node, _ in calls:
+                used_method_names.add(content[call_node.start_byte:call_node.end_byte])
+
+        # 4. Filter methods to keep
+        lines = content.splitlines()
+        to_stub = []
+        for m in methods:
+            if m not in changed_methods and m['name'] not in used_method_names:
+                if m['body_node']:
+                    to_stub.append(m)
+
+        # 5. Apply stubs (from bottom to top to preserve offsets if we were deleting, 
+        # but here we just replace lines in the same range)
+        for m in sorted(to_stub, key=lambda x: x['start_line'], reverse=True):
+            body = m['body_node']
+            start_row, _ = body.start_point
+            end_row, _ = body.end_point
+            
+            if end_row > start_row:
+                # Keep braces but empty the middle
+                indent = " " * body.start_point[1]
+                lines[start_row] = lines[start_row][:body.start_point[1]+1] # Keep {
+                for i in range(start_row + 1, end_row):
+                    lines[i] = f"{indent}    // [cleaned up context]"
+                # Keep } on the last line
+                
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.warning(f"Failed to cleanup context for {file_path}: {e}")
+        return content
+
 def create_annotated_file(full_content: str, diff_content: str) -> str:
     """
     Creates an annotated file content where each line is prefixed with its
-    old and new line number, change type ('+', '-', ' '), and the code.
-    This provides a rich, unambiguous context for the LLM.
+    old and new line number and a change marker.
+    Shows the WHOLE file content.
     """
+    lines = full_content.splitlines()
     if not diff_content:
-        return "\n".join([f"{i+1:4d} {i+1:4d}   {line}" for i, line in enumerate(full_content.splitlines())])
+        return "\n".join([f"     {i+1:4d}   {line}" for i, line in enumerate(lines)])
 
     try:
         patch = PatchSet(io.StringIO(diff_content))
-        if not patch: return full_content
         
-        annotated_lines = []
-        for patched_file in patch:
-            for hunk in patched_file:
+        added_lines = {} 
+        removed_lines = {} 
+    
+        changes = {} 
+        
+        current_new_line = 1
+        
+        
+        for pf in patch:
+            for hunk in pf:
                 for line in hunk:
-                    old_lineno_str = str(line.source_line_no) if line.source_line_no else ''
-                    new_lineno_str = str(line.target_line_no) if line.target_line_no else ''
-                    
-                    annotated_lines.append(f"{old_lineno_str:>4} {new_lineno_str:>4} {line.line_type}{line.value.rstrip()}")
+                    if line.is_added:
+                        changes[line.target_line_no] = (line.source_line_no or '', line.target_line_no, '+', line.value.rstrip())
+                    elif line.is_removed:
+                        # removed lines are attached to the position BEFORE the next new line
+                        pos = line.target_line_no if line.target_line_no else hunk.target_start
+                        if pos not in changes:
+                            changes[pos] = []
+                        if isinstance(changes[pos], tuple):
+                            # Already has an added/unchanged line at this pos? 
+                            # We need to handle multiples. Let's make it always a list.
+                            changes[pos] = [changes[pos]]
+                        elif not isinstance(changes[pos], list):
+                            changes[pos] = []
+                            
+                        changes[pos].append((line.source_line_no, '', '-', line.value.rstrip()))
+                    else:
+                        changes[line.target_line_no] = (line.source_line_no, line.target_line_no, ' ', line.value.rstrip())
+
+        annotated_lines = []
+
+        # RE-SIMPLIFIED STRATEGY for Full File Annotation:
+        # Use simple prefix for all lines, and if line is in diff hunks as + or -, show it.
         
+        # 1. Get all line info from patch
+        diff_info = {} # new_lineno -> (marker, old_lineno)
+        removals = {} # new_lineno -> list of (old_lineno, text)
+        
+        for pf in patch:
+            for hunk in pf:
+                for line in hunk:
+                    if line.is_added:
+                        diff_info[line.target_line_no] = ('+', line.source_line_no)
+                    elif line.is_removed:
+                        # Removals don't have a new_lineno. We group them by context.
+                        # Usually they appear before line.target_line_no
+                        key = line.target_line_no if line.target_line_no else hunk.target_start
+                        if key not in removals: removals[key] = []
+                        removals[key].append((line.source_line_no, line.value.rstrip()))
+                    else:
+                        diff_info[line.target_line_no] = (' ', line.source_line_no)
+
+        for i, line_text in enumerate(lines):
+            lineno = i + 1
+            
+            # Show removals before this line
+            if lineno in removals:
+                for old_no, text in removals[lineno]:
+                    annotated_lines.append(f"{old_no:>4}      - {text}")
+            
+            marker, old_no = diff_info.get(lineno, (' ', lineno)) # default to unchanged if not in hunk
+            old_no_str = str(old_no) if old_no else ''
+            annotated_lines.append(f"{old_no_str:>4} {lineno:>4} {marker} {line_text}")
+
         return "\n".join(annotated_lines)
 
     except Exception as e:
         logger.error(f"Error creating annotated file: {e}", exc_info=True)
         return f"--- FULL FILE CONTENT ---\n{full_content}\n\n--- GIT DIFF ---\n{diff_content}"
-    
+
 
 def get_structured_diff_summary(repo_path: str, base_ref: str, head_ref: str) -> dict:
     """Analyzes the diff and returns a structured summary using `git diff --numstat`."""

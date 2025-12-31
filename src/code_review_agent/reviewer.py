@@ -2,7 +2,6 @@ import json
 import ast
 import logging
 from typing import Dict, List, Any
-import concurrent.futures
 from pydantic import ValidationError
 from .models import ReviewResult, IssueType
 from .llm_client import get_client
@@ -32,7 +31,8 @@ def _normalize_issue(raw_issue: dict) -> dict:
     Pydantic-compatible dictionary.
     """
     normalized = {}
-    
+
+    normalized['file_path'] = str(raw_issue.get('file_path') or raw_issue.get('filePath') or '')
 
     line_val = raw_issue.get('line_number') or raw_issue.get('line') or raw_issue.get('lineNumber', 0)
     try:
@@ -72,7 +72,7 @@ def run_review(
 ) -> Dict[str, ReviewResult]:
     
     client = get_client(llm_config)
-    model = llm_config.get('models', {}).get('reviewer', 'gpt-5-mini')
+    model = llm_config.get('models', {}).get('reviewer', 'gpt-5.1-codex-max')
 
     focus_prompt_part = "Your primary focus for this review should be on the following areas: "
     focus_prompt_part += ", ".join(focus_areas) + "."
@@ -101,157 +101,143 @@ def run_review(
     """    
 
     system_prompt = f"""
-    You are an expert AI code review assistant. You will be given an annotated file where each line is prefixed with its old and new line number, a change marker (`+`, `-`, or space), and provide feedback as a clean JSON array.
-
+    You are an expert AI code review assistant. You will be given a set of annotated files and a separate Git Diff block.
+    
     **--- INPUT FORMAT EXPLANATION ---**
-    You will receive code in this format: `[old_lineno] [new_lineno] [marker] [code]`
+    For each file, you will receive code in this format: `[old_lineno] [new_lineno] [marker] [code]`
     
     **Marker Definitions:**
     - `+`: A new or modified line. This is the new version of the line.
     - `-`: An old or removed line. This is the old version of the line.
     - ` ` (a space, no +/-): This line is unchanged and provided for context only.
 
-    **Example:**
-    `   150               - await oldMethodAsync();`
-    `         152         + await newMethodAsync(newArgument);`
-    `   153   153           // Unchanged context line`
-
     **--- BEHAVIORAL RULES (MOST IMPORTANT) ---**
-    1.  **Assume Intent is Correct:** This is your primary directive. Your default stance is that the developer made the changes on purpose to achieve a specific goal. Your job is **not to question the goal** of the change, but to find bugs **within the new code**.
-        -   When code is replaced (a `-` line followed by a `+` line), you **MUST NOT** simply suggest reverting to the old code. This is unhelpful.
-        -   Instead, analyze the **NEW code (`+` lines)** assuming it is the desired new logic. Your task is to find flaws *in the new implementation* (e.g., typos, null reference risks, performance issues), not to challenge the change itself.
-    2.  **Be Helpful, Not Annoying:** Be friendly and assume you might be wrong. Your goal is to help, not to criticize.
-    3.  **Focus on Concrete Technical Errors:** Prioritize clear, objective issues like copy-paste errors, logical flaws, N+1 query problems, race conditions, and similar technical bugs.
-    4.  **High Confidence Only:** You MUST only report issues you are highly confident about. If you are even slightly unsure whether something is a real issue, it is better to ignore it. Do not report trivial or subjective style preferences. Your goal is to find significant, undeniable problems.
-    5.  **DO NOT REPORT COMPILER/LINTER ERRORS:** Your primary value is to find issues that compilers and basic linters cannot. You MUST NOT report simple syntax errors, missing imports, type mismatches, or other issues that would cause a compilation failure or be caught by a standard linter. Assume that the code will be compiled and linted separately. Focus on higher-level problems.
-    6.  **No Evidence, No Comment:** If a change *could* potentially cause a problem elsewhere (e.g., an interface change), but you have no direct evidence from the provided context that it *does* cause a problem, you MUST ignore it. Do not speculate about hypothetical issues.
-    7.  **IGNORE TEST FILES:** You are strictly forbidden from analyzing or commenting on test files. If a file path contains "Test" or "Spec", or is inside a "tests" or "specs" directory, you MUST ignore it and return an empty result for that file.
-    8.  **Consolidate Feedback:** Before generating the output, review all the potential issues you've found for a single file. **You MUST merge related or overlapping comments into a single, comprehensive comment.** If you identify the same underlying problem from different angles, report it ONLY ONCE under the most severe category. Your goal is high-signal, low-noise feedback.
+    1.  **Assume Intent is Correct:** Your job is to find bugs **within the new code**.
+    2.  **Be Helpful, Not Annoying.**
+    3.  **Focus on Concrete Technical Errors.**
+    4.  **High Confidence Only.**
+    5.  **DO NOT REPORT COMPILER/LINTER ERRORS.**
+    6.  **No Evidence, No Comment.**
+    7.  **IGNORE TEST FILES.**
+    8.  **Consolidate Feedback.**
 
     **--- YOUR TASK ---**
-    Analyze the **annotated file content** to identify **concrete, existing issues** ONLY in the changed lines (marked with `+` or `-`).
+    Analyze the **annotated files** and the **Git Diff** to identify **concrete, existing issues** ONLY in the changed lines.
 
     **--- ISSUE CATEGORY DEFINITIONS ---**
-    You MUST classify every issue using one of the types from the table below.
     {definitions_table}
 
-    
     **--- CRITICAL RULES ---**
-    1.  **Modification Analysis:** When you see a `-` line followed by a `+` line, you MUST treat this as a **modification**. Your primary task is to determine if the new version (`+` line) is a correct and good replacement for the old version (`-` line). **DO NOT suggest the `+` line as a fix for the `-` line**, as the change has already been made. Instead, check if the new `+` line itself has any flaws.
-    2.  **SCOPE:** Your comments and `line_number` MUST correspond to the **new line number** of lines marked with `+`. DO NOT comment on unchanged or removed (`-`) lines.
-    3.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**.
-    4.  **EVIDENCE REQUIRED (NO SPECULATION):**
-        -   Your task is to find **BUGS in the provided code**, not to warn about potential side-effects in code that you cannot see.
-        -   **CRITICAL: Changing a method signature, return type, or interface is NOT a bug.** It is a planned change. You MUST assume the developer will update all callers elsewhere.
-        -   You are **STRICTLY FORBIDDEN** from leaving comments like "Ensure all call sites are updated" or "This change impacts callers". This is not helpful feedback.
-        -   You should ONLY report an error if you have **direct evidence** within the provided context that an existing caller **is now broken**. If you have no such evidence, you **MUST** remain silent about signature changes.
-    5.  **PRAGMATISM:** Focus exclusively on **actual, present problems**. Your feedback must be actionable for the developer **right now**.
-    6.  **SUGGESTION FORMAT:** Your primary goal for the `suggestion` field is to provide a **direct code fix**.
-    7.  **AVOID REDUNDANT SUGGESTIONS:** DO NOT suggest a change that is identical to the existing code.
-    8.  **NULL REFERENCE SAFETY:** Respect null-safety mechanisms. DO NOT report potential `NullReferenceException` issues if:
-        - The code is inside an explicit null-check block (e.g., `if (obj != null)`).
-        - For .NET code, modern nullability syntax is used (e.g., nullable reference types `?` or the null-forgiving operator `!`).
-    9.  {custom_rules_instruction}
-
+    1.  **SCOPE:** Your comments and `line_number` MUST correspond to the **new line number** of lines marked with `+`.
+    2.  **FOCUS:** You are strictly forbidden from reporting any issue types that are not in this list: **{', '.join(focus_areas)}**.
+    3.  **EVIDENCE REQUIRED (NO SPECULATION).**
+    4.  {custom_rules_instruction}
 
     **--- OUTPUT FORMAT ---**
     - Your entire response MUST be a single, raw, valid JSON array string.
-    - The response MUST start with `[` and end with `]`.
-    - Each object in the array MUST have these keys: "line_number" (int), "issue_type" (str, one of the focused types), "comment" (str), and an optional "suggestion" (str).
-    - **Crucial:** If you find absolutely no issues that match your focus and instructions, you MUST return an empty JSON array: `[]`. It is a valid and expected response.
-    - Do not add any text, explanations, apologies, or markdown formatting like ```json.
-    - Before outputting, internally validate your response to ensure it is perfectly formed JSON. Pay special attention to escaping quotes (") and backslashes (\\).
+    - Each object in the array MUST have these keys:
+        - "file_path": The path of the file where the issue is located.
+        - "line_number": The new line number (int).
+        - "issue_type": The category (str).
+        - "comment": Your detailed feedback (str).
+        - "suggestion": Direct code fix (optional str).
+    - If no issues are found, return `[]`.
+    - Do not add any text, explanations, or markdown formatting.
     """
 
-    review_results = {}
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_file = {
-            executor.submit(
-                _process_single_file,
-                file_path,
-                diff_content,
-                final_context_content,
-                git_utils,
-                jira_details,
-                system_prompt,
-                client,
-                model
-            ): file_path
-            for file_path, diff_content in changed_files_map.items()
-        }
-
-        for future in concurrent.futures.as_completed(future_to_file):
-            file_path = future_to_file[future]
-            try:
-                result = future.result()
-                review_results[file_path] = result
-            except Exception as e:
-                logger.error(f"Error processing file {file_path}: {e}", exc_info=True)
-                review_results[file_path] = ReviewResult(issues=[])
-
-    return review_results
-
-def _process_single_file(
-    file_path: str,
-    diff_content: str,
-    final_context_content: Dict[str, str],
-    git_utils_module,
-    jira_details: str,
-    system_prompt: str,
-    client,
-    model: str
-) -> ReviewResult:
-    logger.info(f"Reviewing file: {file_path}")
-    full_file_content = final_context_content.get(file_path, "File content not available.")
-
-    annotated_content = git_utils_module.create_annotated_file(full_file_content, diff_content)
+    all_files_annotated = []
+    full_diff_parts = []
     
+    for file_path, diff_content in changed_files_map.items():
+        full_file_content = final_context_content.get(file_path, "File content not available.")
+        
+        # AI Cleanup Context
+        cleaned_content = git_utils.cleanup_code_context(file_path, full_file_content, diff_content)
+        
+        # If the file was cleaned (C# usually), we might want to show more of it
+        # for now let's just use the cleaned content for hunk annotation
+        annotated_content = git_utils.create_annotated_file(cleaned_content, diff_content)
+        
+        all_files_annotated.append(f"### FILE: {file_path}\n{annotated_content}")
+        full_diff_parts.append(f"--- {file_path} ---\n{diff_content}")
+
+    full_diff_text = "\n".join(full_diff_parts)
+    all_files_annotated_text = "\n\n".join(all_files_annotated)
+
     user_prompt = f"""
     {jira_details}
-    Please review the following annotated file: `{file_path}`.
-    Return your findings as a raw JSON array string.
 
-    **Annotated File Content for `{file_path}`:**
+    **--- GIT DIFF BLOCK ---**
+    ```diff
+    {full_diff_text}
     ```
-    {annotated_content}
-    ```
+
+    **--- ANNOTATED FILES CONTENT ---**
+    {all_files_annotated_text}
+
+    Please review all these files and the overall change. Return your findings as a raw JSON array string.
     """
 
-    try:
-        logger.debug(f"--- System Prompt for {file_path} ---\n{system_prompt}")
-        logger.debug(f"--- User Prompt for {file_path} ---\n{user_prompt}")
+    logger.info(f"Reviewing {len(changed_files_map)} files at once using model {model}")
 
-        response = client.chat.completions.create(
+    try:
+        response = client.responses.create(
             model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            input=f"{system_prompt}\n\n{user_prompt}",
         )
         
-        raw_response_text = response.choices[0].message.content.strip()
-        logger.debug(f"Raw LLM response for {file_path}:\n{raw_response_text}")
+        raw_response_text = ""
+        for item in response.output:
+            if hasattr(item, "content") and item.content:
+                for part in item.content:
+                    if hasattr(part, "text"):
+                        raw_response_text = part.text
+                        break
+            if not raw_response_text:
+                raw_response_text = getattr(item, "text", "") or getattr(item, "message", "")
+            if raw_response_text:
+                break
+        
+        logger.debug(f"Raw LLM response:\n{raw_response_text}")
 
-        try:
-            start_index = raw_response_text.find('[')
-            end_index = raw_response_text.rfind(']')
+        start_index = raw_response_text.find('[')
+        end_index = raw_response_text.rfind(']')
 
-            if start_index != -1 and end_index != -1 and end_index > start_index:
-                json_str_cleaned = raw_response_text[start_index : end_index + 1]
+        if start_index != -1 and end_index != -1 and end_index > start_index:
+            json_str_cleaned = raw_response_text[start_index : end_index + 1]
+            parsed_json = robust_json_parser(json_str_cleaned)
+            
+            # Group issues by file_path
+            issues_by_file = {}
+            for raw_issue in parsed_json:
+                normalized = _normalize_issue(raw_issue)
+                fp = normalized.get('file_path')
+                if not fp or fp not in changed_files_map:
+                    # Try to find the closest match if the LLM hallucinated the path slightly
+                    matches = [path for path in changed_files_map.keys() if fp in path or path in fp]
+                    if matches:
+                        fp = matches[0]
+                    else:
+                        logger.warning(f"Issue refers to unknown file path: {fp}. Skipping.")
+                        continue
                 
-                parsed_json = robust_json_parser(json_str_cleaned)
-                
-                normalized_issues = [_normalize_issue(issue) for issue in parsed_json]
-                return ReviewResult(issues=normalized_issues)
-            else:
-                logger.info(f"No valid JSON array found for {file_path}. Assuming no issues.")
-                return ReviewResult(issues=[])
-        except (ValueError, SyntaxError, ValidationError) as e:
-            logger.warning(f"Failed to parse/validate LLM response for {file_path}. Error: {e}")
-            logger.debug(f"Problematic response was: '{raw_response_text}'")
-            return ReviewResult(issues=[])
+                if fp in changed_files_map:
+                    normalized['file_path'] = fp
+                    if fp not in issues_by_file:
+                        issues_by_file[fp] = []
+                    issues_by_file[fp].append(normalized)
+
+            # Convert to final Dict[str, ReviewResult]
+            review_results = {}
+            for file_path in changed_files_map.keys():
+                issues = issues_by_file.get(file_path, [])
+                review_results[file_path] = ReviewResult(issues=issues)
+            
+            return review_results
+        else:
+            logger.info("No valid JSON array found in LLM response. Assuming no issues.")
+            return {fp: ReviewResult(issues=[]) for fp in changed_files_map.keys()}
 
     except Exception as e:
-        logger.error(f"Critical error during LLM call for {file_path}: {e}", exc_info=True)
-        return ReviewResult(issues=[])
+        logger.error(f"Critical error during combined LLM call: {e}", exc_info=True)
+        return {fp: ReviewResult(issues=[]) for fp in changed_files_map.keys()}

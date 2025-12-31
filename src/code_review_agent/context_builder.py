@@ -78,23 +78,39 @@ def determine_context(
         logger.debug(f"--- System Prompt for Context Builder ---\n{system_prompt}")
         logger.debug(f"--- User Prompt for Context Builder ---\n{user_prompt}")
 
-        response = client.chat.completions.create(
+        response = client.responses.create(
             model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            input=f"{system_prompt}\n\n{user_prompt}",
         )
-        raw_response_text = response.choices[0].message.content.strip()
+        
+        # Extract text from responses API output
+        raw_response_text = ""
+        for item in response.output:
+            if hasattr(item, "content") and item.content:
+                for part in item.content:
+                    if hasattr(part, "text"):
+                        raw_response_text = part.text
+                        break
+            if not raw_response_text:
+                raw_response_text = getattr(item, "text", "") or getattr(item, "message", "")
+            if raw_response_text:
+                break
+
         logger.debug(f"Raw LLM response from Context Builder:\n{raw_response_text}")
 
         try:
-            json_str = raw_response_text
+            json_str = raw_response_text.strip()
             if json_str.startswith("```json"):
                 json_str = json_str.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
             elif json_str.startswith("```"):
                 json_str = json_str.strip("` \n")
             
+            # Additional safety for leading/trailing text
+            inner_start = json_str.find('{')
+            inner_end = json_str.rfind('}')
+            if inner_start != -1 and inner_end != -1:
+                json_str = json_str[inner_start : inner_end + 1]
+
             parsed_json = json.loads(json_str, strict=False)
             validated_response = ContextRequirements(**parsed_json)
             return validated_response

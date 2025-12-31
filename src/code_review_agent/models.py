@@ -24,6 +24,7 @@ IssueType = Literal[
 ]
 
 class CodeIssue(BaseModel):
+    file_path: str
     line_number: int
     issue_type: IssueType
     comment: str
