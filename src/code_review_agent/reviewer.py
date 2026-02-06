@@ -72,7 +72,7 @@ def run_review(
 ) -> Dict[str, ReviewResult]:
     
     client = get_client(llm_config)
-    model = llm_config.get('models', {}).get('reviewer', 'gpt-5.1-codex-max')
+    model = llm_config.get('models', {}).get('reviewer', 'gpt-5.2-codex')
 
     focus_prompt_part = "Your primary focus for this review should be on the following areas: "
     focus_prompt_part += ", ".join(focus_areas) + "."

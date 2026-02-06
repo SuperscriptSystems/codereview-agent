@@ -123,3 +123,30 @@ def determine_context(
     except Exception as e:
         logger.error(f"Error in Context Builder agent: {e}", exc_info=True)
         return ContextRequirements(required_additional_files=[], is_sufficient=True, reasoning="Error occurred during LLM call, aborting context search.")
+
+
+def determine_context_batch(
+    items: list,
+    max_workers: int = 5
+) -> list:
+    """
+    Executes determine_context in parallel for a batch of items.
+    """
+    import concurrent.futures
+    
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(determine_context, **item) for item in items]
+        
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception as e:
+                logger.error(f"Error in batch context determination: {e}")
+                results.append(ContextRequirements(
+                    required_additional_files=[], 
+                    is_sufficient=True, 
+                    reasoning=f"Error in batch execution: {str(e)}"
+                ))
+                
+    return results

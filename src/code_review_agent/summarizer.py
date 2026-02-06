@@ -16,11 +16,13 @@ def summarize_changes_for_jira(
     client = get_client(llm_config)
     model = llm_config.get('models', {}).get('summarizer', 'gpt-5-mini')
 
-    system_prompt = """
+    system_prompt = f"""
     You are an expert AI software analyst. Your task is to analyze metadata about code changes and produce a high-level summary for a Jira ticket.
     
     CRITICAL OUTPUT FORMATTING RULE:
-    Your entire response MUST be a single, valid JSON object that adheres to the `MergeSummary` schema.
+    Your entire response MUST be a single, valid JSON object that adheres to the following JSON Schema:
+    
+    {json.dumps(MergeSummary.model_json_schema(), indent=2)}
     """
     
     diff_summary_text = json.dumps(diff_summary, indent=2)
@@ -54,6 +56,7 @@ def summarize_changes_for_jira(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            response_format={"type": "json_object"},
         )
         raw_response_text = response.choices[0].message.content.strip()
         

@@ -52,23 +52,28 @@ def prioritize_changed_files_with_context_check(
             
         logging.info(f"\n--- Checking Priority Tier {tier_idx + 1} ({len(tier)} files) ---")
         
+        files_to_review.extend(tier)
+        batch_items = []
+        current_changed_files_content = {fp: final_context_content.get(fp, '') for fp in files_to_review}
+        
+        logging.info(f"   - Analyzing context sufficiency for {len(tier)} files in parallel...")
+
         for file_path in tier:
-            files_to_review.append(file_path)
             diff_content = changed_files_map[file_path]
-            
-            logging.info(f"   - Analyzing context sufficiency for: {file_path}")
-            
-            # Check if current context is sufficient for accumulated files
-            context_req = context_builder.determine_context(
-                diff=diff_content,
-                commit_messages=commit_messages,
-                changed_files_content={fp: final_context_content.get(fp, '') for fp in files_to_review},
-                jira_details=jira_details,
-                full_context_content=final_context_content,
-                file_structure=full_project_structure,
-                current_context_files=list(final_context_content.keys()),
-                llm_config=llm_config,
-            )
+            batch_items.append({
+                "diff": diff_content,
+                "commit_messages": commit_messages,
+                "changed_files_content": current_changed_files_content,
+                "jira_details": jira_details,
+                "full_context_content": final_context_content,
+                "file_structure": full_project_structure,
+                "current_context_files": list(final_context_content.keys()),
+                "llm_config": llm_config,
+            })
+
+        batch_results = context_builder.determine_context_batch(batch_items)
+
+        for file_path, context_req in zip(tier, batch_results):
             
             # Add any additional required files to context
             if not context_req.is_sufficient and context_req.required_additional_files:
@@ -84,10 +89,8 @@ def prioritize_changed_files_with_context_check(
                         final_context_content[new_file] = git_utils.get_file_content(repo_path, new_file)
                         logging.info(f"   - Added context file: {new_file}")
             
-            # Check if context is now sufficient
             if context_req.is_sufficient:
                 logging.info(f"   ✅ Context is sufficient after processing {file_path}")
-                continue
         
         # After processing entire tier, check if we have sufficient context for all files so far
         all_diffs = "\n".join([changed_files_map[fp] for fp in files_to_review])
