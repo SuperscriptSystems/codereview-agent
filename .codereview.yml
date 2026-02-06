@@ -44,6 +44,10 @@ filtering:
 
   ignored_patterns:
     - 'Designer.cs'
+    - 'package-lock.json'
+    - 'yarn.lock'
+    - 'pnpm-lock.yaml'
+    - 'package.json'
 
 # Keywords to identify and ignore test files
 
