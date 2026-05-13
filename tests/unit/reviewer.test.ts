@@ -60,6 +60,16 @@ END_JSON`,
     })
   })
 
+  it("fails when reviewer output cannot be parsed into structured issues", async () => {
+    const client = {
+      createSession: async () => "session-1",
+      promptText: async () => "I found a couple of problems, but here they are in prose.",
+      close: () => {},
+    }
+
+    await expect(runReview(client, input)).rejects.toThrow(/Reviewer returned unparseable structured output/)
+  })
+
   it("no longer depends on annotated file assembly", async () => {
     const reviewerSource = await import("node:fs/promises").then(({ readFile }) =>
       readFile(new URL("../../src/review/reviewer.ts", import.meta.url), "utf8"),

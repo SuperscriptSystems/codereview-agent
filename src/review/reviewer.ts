@@ -1,7 +1,7 @@
 import type { ChangedFileMap, IssueType, ReviewResult } from "../core/models.js"
 import { reviewIssuesEnvelopeSchema } from "../core/models.js"
 import type { OpencodeSessionClient } from "../opencode/client.js"
-import { buildStructuredOutputInstructions, parseStructuredOutput } from "../opencode/structured-output.js"
+import { buildStructuredOutputInstructions, parseStructuredOutputOrNull } from "../opencode/structured-output.js"
 
 export interface RunReviewInput {
   repoPath: string
@@ -23,7 +23,11 @@ export async function runReview(client: OpencodeSessionClient, input: RunReviewI
     prompt,
   })
 
-  const envelope = parseStructuredOutput(responseText, reviewIssuesEnvelopeSchema, { issues: [] })
+  const envelope = parseStructuredOutputOrNull(responseText, reviewIssuesEnvelopeSchema)
+  if (!envelope) {
+    throw new Error(`Reviewer returned unparseable structured output: ${truncateResponse(responseText)}`)
+  }
+
   const issuesByFile = new Map<string, ReviewResult["issues"]>()
 
   for (const issue of envelope.issues) {
@@ -39,6 +43,11 @@ export async function runReview(client: OpencodeSessionClient, input: RunReviewI
   return Object.fromEntries(
     Object.keys(input.changedFilesMap).map((filePath) => [filePath, { issues: issuesByFile.get(filePath) ?? [] }]),
   )
+}
+
+function truncateResponse(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  return normalized.length <= 500 ? normalized : `${normalized.slice(0, 497)}...`
 }
 
 export function buildReviewPrompt(input: RunReviewInput): string {

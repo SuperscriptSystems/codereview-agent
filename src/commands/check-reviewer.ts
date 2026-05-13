@@ -4,7 +4,7 @@ import { loadRawConfig } from "../config/load-config.js"
 import { configureLogger, logger } from "../core/logger.js"
 import { reviewIssuesEnvelopeSchema } from "../core/models.js"
 import { createSessionClient } from "../opencode/client.js"
-import { buildStructuredOutputInstructions, parseStructuredOutput } from "../opencode/structured-output.js"
+import { buildStructuredOutputInstructions, parseStructuredOutputOrNull } from "../opencode/structured-output.js"
 
 export interface CheckReviewerCommandOptions {
   repoPath: string
@@ -25,7 +25,10 @@ export async function runCheckReviewerCommand(options: CheckReviewerCommandOptio
       prompt: buildReviewerCheckPrompt(),
     })
 
-    const result = parseStructuredOutput(responseText, reviewIssuesEnvelopeSchema, { issues: [] })
+    const result = parseStructuredOutputOrNull(responseText, reviewIssuesEnvelopeSchema)
+    if (!result) {
+      throw new Error(`Reviewer returned unparseable structured output: ${truncateResponse(responseText)}`)
+    }
 
     logger.info("Reviewer connectivity check passed.")
     logger.info(`Repo: ${repoPath}`)
@@ -36,6 +39,11 @@ export async function runCheckReviewerCommand(options: CheckReviewerCommandOptio
   } finally {
     client.close()
   }
+}
+
+function truncateResponse(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  return normalized.length <= 500 ? normalized : `${normalized.slice(0, 497)}...`
 }
 
 function buildReviewerCheckPrompt(): string {
