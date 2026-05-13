@@ -102,7 +102,7 @@ function normalizeCodeIssue(value: unknown): unknown {
 
   return {
     ...candidate,
-    filePath: candidate.filePath ?? candidate.file,
+    filePath: candidate.filePath ?? candidate.file ?? candidate.path,
     lineNumber: candidate.lineNumber ?? candidate.line,
     issueType: candidate.issueType ?? candidate.type,
     comment: candidate.comment ?? candidate.description ?? candidate.message,
