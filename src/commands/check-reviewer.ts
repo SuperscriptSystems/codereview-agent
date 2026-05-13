@@ -2,9 +2,8 @@ import path from "node:path"
 
 import { loadRawConfig } from "../config/load-config.js"
 import { configureLogger, logger } from "../core/logger.js"
-import { reviewIssuesEnvelopeSchema } from "../core/models.js"
+import { reviewIssuesEnvelopeJsonSchema, reviewIssuesEnvelopeSchema } from "../core/models.js"
 import { createSessionClient } from "../opencode/client.js"
-import { buildStructuredOutputInstructions, parseStructuredOutputOrNull } from "../opencode/structured-output.js"
 
 export interface CheckReviewerCommandOptions {
   repoPath: string
@@ -20,15 +19,11 @@ export async function runCheckReviewerCommand(options: CheckReviewerCommandOptio
 
   try {
     const sessionId = await client.createSession("reviewer-check")
-    const responseText = await client.promptText(sessionId, {
+    const result = reviewIssuesEnvelopeSchema.parse(await client.promptStructured(sessionId, {
       agent: "reviewer",
       prompt: buildReviewerCheckPrompt(),
-    })
-
-    const result = parseStructuredOutputOrNull(responseText, reviewIssuesEnvelopeSchema)
-    if (!result) {
-      throw new Error(`Reviewer returned unparseable structured output: ${truncateResponse(responseText)}`)
-    }
+      schema: reviewIssuesEnvelopeJsonSchema,
+    }))
 
     logger.info("Reviewer connectivity check passed.")
     logger.info(`Repo: ${repoPath}`)
@@ -41,17 +36,12 @@ export async function runCheckReviewerCommand(options: CheckReviewerCommandOptio
   }
 }
 
-function truncateResponse(text: string): string {
-  const normalized = text.replace(/\s+/g, " ").trim()
-  return normalized.length <= 500 ? normalized : `${normalized.slice(0, 497)}...`
-}
-
 function buildReviewerCheckPrompt(): string {
   return [
-    buildStructuredOutputInstructions("Return a single JSON object with an issues array.", reviewIssuesEnvelopeSchema),
     "This is a reviewer connectivity and auth smoke test.",
     "Do not inspect the repository.",
     "Do not call tools.",
+    "Return a JSON object matching the provided schema.",
     "Return an empty issues array.",
   ].join("\n\n")
 }

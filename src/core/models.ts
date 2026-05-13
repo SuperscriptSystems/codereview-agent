@@ -11,6 +11,8 @@ export const issueTypeValues = [
   "Other",
 ] as const
 
+export const issueTypeJsonSchemaValues = [...issueTypeValues]
+
 export const issueTypeSchema = z.enum(issueTypeValues)
 export type IssueType = z.infer<typeof issueTypeSchema>
 
@@ -92,6 +94,118 @@ export type FileContentMap = Record<string, string>
 export const reviewIssuesEnvelopeSchema = z.object({
   issues: z.array(codeIssueSchema),
 })
+
+export const reviewIssuesEnvelopeJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    issues: {
+      type: "array",
+      description: "Concrete, high-confidence review findings in changed files only.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          filePath: {
+            type: "string",
+            description: "Changed file path relative to the repository root.",
+          },
+          lineNumber: {
+            type: "integer",
+            minimum: 0,
+            description: "Line number in the new file version where the issue should be attached.",
+          },
+          issueType: {
+            type: "string",
+            enum: issueTypeJsonSchemaValues,
+            description: "Classification of the issue.",
+          },
+          comment: {
+            type: "string",
+            description: "Short explanation of the concrete issue and why it matters.",
+          },
+          suggestion: {
+            type: "string",
+            description: "Optional concrete fix suggestion.",
+          },
+        },
+        required: ["filePath", "lineNumber", "issueType", "comment"],
+      },
+    },
+  },
+  required: ["issues"],
+} as const
+
+export const contextRequirementsJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    requiredAdditionalFiles: {
+      type: "array",
+      items: { type: "string" },
+      description: "Additional file paths needed to confidently review the current change set.",
+    },
+    isSufficient: {
+      type: "boolean",
+      description: "Whether the currently provided context is sufficient for review.",
+    },
+    reasoning: {
+      type: "string",
+      description: "Brief explanation of why more context is or is not required.",
+    },
+  },
+  required: ["requiredAdditionalFiles", "isSufficient", "reasoning"],
+} as const
+
+export const mergeSummaryJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    relevanceScore: {
+      type: "integer",
+      minimum: 0,
+      maximum: 100,
+      description: "Score indicating how well the change aligns with the Jira task.",
+    },
+    relevanceJustification: {
+      type: "string",
+      description: "Short justification for the relevance score.",
+    },
+    dbTablesCreated: {
+      type: "array",
+      items: { type: "string" },
+      description: "Database tables created by the change.",
+    },
+    dbTablesModified: {
+      type: "array",
+      items: { type: "string" },
+      description: "Database tables modified by the change.",
+    },
+    apiEndpointsAdded: {
+      type: "array",
+      items: { type: "string" },
+      description: "API endpoints added by the change.",
+    },
+    apiEndpointsModified: {
+      type: "array",
+      items: { type: "string" },
+      description: "API endpoints modified by the change.",
+    },
+    commitSummary: {
+      type: "string",
+      description: "Short technical summary of the implemented change.",
+    },
+  },
+  required: [
+    "relevanceScore",
+    "relevanceJustification",
+    "dbTablesCreated",
+    "dbTablesModified",
+    "apiEndpointsAdded",
+    "apiEndpointsModified",
+    "commitSummary",
+  ],
+} as const
 
 function normalizeCodeIssue(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

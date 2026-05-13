@@ -38,9 +38,13 @@ describe("reviewer", () => {
   it("filters findings outside the changed file scope", async () => {
     const client = {
       createSession: async () => "session-1",
-      promptText: async () => `BEGIN_JSON
-{"issues":[{"filePath":"src/app.ts","lineNumber":10,"issueType":"LogicError","comment":"Real issue"},{"filePath":"src/other.ts","lineNumber":3,"issueType":"Security","comment":"Out of scope"}]}
-END_JSON`,
+      promptText: async () => "",
+      promptStructured: async () => ({
+        issues: [
+          { filePath: "src/app.ts", lineNumber: 10, issueType: "LogicError", comment: "Real issue" },
+          { filePath: "src/other.ts", lineNumber: 3, issueType: "Security", comment: "Out of scope" },
+        ],
+      }),
       close: () => {},
     }
 
@@ -63,11 +67,14 @@ END_JSON`,
   it("fails when reviewer output cannot be parsed into structured issues", async () => {
     const client = {
       createSession: async () => "session-1",
-      promptText: async () => "I found a couple of problems, but here they are in prose.",
+      promptText: async () => "",
+      promptStructured: async () => ({
+        issues: [{ filePath: "src/app.ts", lineNumber: 1, issueType: "NotARealType", comment: "Broken" }],
+      }),
       close: () => {},
     }
 
-    await expect(runReview(client, input)).rejects.toThrow(/Reviewer returned unparseable structured output/)
+    await expect(runReview(client, input)).rejects.toThrow()
   })
 
   it("no longer depends on annotated file assembly", async () => {

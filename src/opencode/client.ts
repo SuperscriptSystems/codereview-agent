@@ -9,6 +9,10 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
 export interface OpencodeSessionClient {
   createSession(title: string): Promise<string>
   promptText(sessionId: string, options: { agent: string; system?: string; prompt: string }): Promise<string>
+  promptStructured<T>(
+    sessionId: string,
+    options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown>; retryCount?: number },
+  ): Promise<T>
   close(): void
 }
 
@@ -49,6 +53,39 @@ export async function createSessionClient(config: Record<string, unknown>, direc
       }
 
       return extractTextFromParts(data.parts)
+    },
+    async promptStructured<T>(
+      sessionId: string,
+      options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown>; retryCount?: number },
+    ): Promise<T> {
+      const response = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          agent: options.agent,
+          system: options.system,
+          parts: [{ type: "text", text: options.prompt }],
+          format: {
+            type: "json_schema",
+            retryCount: options.retryCount ?? 3,
+            schema: options.schema,
+          },
+        },
+      })
+
+      const info = getStructuredOutputInfo(response)
+      if (info?.error?.name === "StructuredOutputError") {
+        throw new Error(info.error.message ?? "OpenCode structured output validation failed.")
+      }
+
+      if (info?.structured_output === undefined) {
+        throw new Error(buildOpencodeErrorMessage(
+          "run a structured prompt",
+          response,
+          "OpenCode did not return a structured output payload.",
+        ))
+      }
+
+      return info.structured_output as T
     },
     close(): void {
       server.close()
@@ -238,6 +275,19 @@ function buildOpencodeErrorMessage(action: string, response: unknown, fallback: 
   const details = [status, statusText].filter(Boolean).join(" ")
 
   return details ? `OpenCode failed to ${action}: ${errorText} (${details})` : `OpenCode failed to ${action}: ${errorText}`
+}
+
+function getStructuredOutputInfo(response: unknown): { structured_output?: unknown; error?: { name?: string; message?: string } } | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined
+  }
+
+  const candidate = response as {
+    data?: { info?: { structured_output?: unknown; error?: { name?: string; message?: string } } }
+    info?: { structured_output?: unknown; error?: { name?: string; message?: string } }
+  }
+
+  return candidate.data?.info ?? candidate.info
 }
 
 function extractTextFromParts(parts: Array<{ type: string; text?: string }>): string {

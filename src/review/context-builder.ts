@@ -1,7 +1,6 @@
 import type { ContextRequirements, FileContentMap } from "../core/models.js"
-import { contextRequirementsSchema } from "../core/models.js"
+import { contextRequirementsJsonSchema, contextRequirementsSchema } from "../core/models.js"
 import type { OpencodeSessionClient } from "../opencode/client.js"
-import { buildStructuredOutputInstructions, parseStructuredOutput } from "../opencode/structured-output.js"
 
 export interface DetermineContextInput {
   diff: string
@@ -19,16 +18,11 @@ export async function determineContext(
 ): Promise<ContextRequirements> {
   const sessionId = await client.createSession("context-builder")
   const prompt = buildContextPrompt(input)
-  const responseText = await client.promptText(sessionId, {
+  return contextRequirementsSchema.parse(await client.promptStructured(sessionId, {
     agent: "context-builder",
     prompt,
-  })
-
-  return parseStructuredOutput(responseText, contextRequirementsSchema, {
-    requiredAdditionalFiles: [],
-    isSufficient: true,
-    reasoning: "Failed to parse context builder response.",
-  })
+    schema: contextRequirementsJsonSchema,
+  }))
 }
 
 export async function determineContextBatch(
@@ -48,10 +42,7 @@ function buildContextPrompt(input: DetermineContextInput): string {
     .join("\n")
 
   return [
-    buildStructuredOutputInstructions(
-      "Return a single JSON object with keys requiredAdditionalFiles, isSufficient, and reasoning.",
-      contextRequirementsSchema,
-    ),
+    "Return a JSON object matching the provided schema.",
     input.jiraDetails,
     "Commit Messages:",
     input.commitMessages,

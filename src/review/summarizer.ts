@@ -1,6 +1,5 @@
-import { mergeSummarySchema, type MergeSummary } from "../core/models.js"
+import { mergeSummaryJsonSchema, mergeSummarySchema, type MergeSummary } from "../core/models.js"
 import type { OpencodeSessionClient } from "../opencode/client.js"
-import { buildStructuredOutputInstructions, parseStructuredOutputOrNull } from "../opencode/structured-output.js"
 
 export async function summarizeChangesForJira(
   client: OpencodeSessionClient,
@@ -12,7 +11,6 @@ export async function summarizeChangesForJira(
 ): Promise<MergeSummary | null> {
   const sessionId = await client.createSession("summarizer")
   const prompt = [
-    buildStructuredOutputInstructions("Return a single JSON object matching the required summary structure.", mergeSummarySchema),
     "Jira Task Details:",
     input.jiraDetails,
     "Commit Messages:",
@@ -21,15 +19,11 @@ export async function summarizeChangesForJira(
     JSON.stringify(input.diffSummary, null, 2),
   ].join("\n\n")
 
-  const responseText = await client.promptText(sessionId, {
+  const parsed = mergeSummarySchema.parse(await client.promptStructured(sessionId, {
     agent: "summarizer",
     prompt,
-  })
-
-  const parsed = parseStructuredOutputOrNull(responseText, mergeSummarySchema)
-  if (!parsed) {
-    return null
-  }
+    schema: mergeSummaryJsonSchema,
+  }))
 
   return {
     ...parsed,

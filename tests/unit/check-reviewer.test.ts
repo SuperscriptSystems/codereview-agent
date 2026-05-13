@@ -28,7 +28,7 @@ const { runCheckReviewerCommand } = await import("../../src/commands/check-revie
 describe("check-reviewer command", () => {
   const sessionClient = {
     createSession: vi.fn(),
-    promptText: vi.fn(),
+    promptStructured: vi.fn(),
     close: vi.fn(),
   }
 
@@ -37,14 +37,14 @@ describe("check-reviewer command", () => {
     loadRawConfigMock.mockResolvedValue({ agent: {} })
     createSessionClientMock.mockResolvedValue(sessionClient)
     sessionClient.createSession.mockResolvedValue("session-1")
-    sessionClient.promptText.mockResolvedValue('BEGIN_JSON\n{"issues":[]}\nEND_JSON')
+    sessionClient.promptStructured.mockResolvedValue({ issues: [] })
   })
 
   it("verifies reviewer connectivity without a diff range", async () => {
     await runCheckReviewerCommand({ repoPath: "/repo", trace: true })
 
     expect(sessionClient.createSession).toHaveBeenCalledWith("reviewer-check")
-    expect(sessionClient.promptText).toHaveBeenCalledWith("session-1", expect.objectContaining({
+    expect(sessionClient.promptStructured).toHaveBeenCalledWith("session-1", expect.objectContaining({
       agent: "reviewer",
     }))
     expect(loggerFns.info).toHaveBeenCalledWith("Reviewer connectivity check passed.")
