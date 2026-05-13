@@ -283,11 +283,34 @@ function getStructuredOutputInfo(response: unknown): { structured_output?: unkno
   }
 
   const candidate = response as {
-    data?: { info?: { structured_output?: unknown; error?: { name?: string; message?: string } } }
-    info?: { structured_output?: unknown; error?: { name?: string; message?: string } }
+    data?: {
+      info?: {
+        structured_output?: unknown
+        structured?: unknown
+        error?: { name?: string; message?: string; data?: { message?: string } }
+      }
+    }
+    info?: {
+      structured_output?: unknown
+      structured?: unknown
+      error?: { name?: string; message?: string; data?: { message?: string } }
+    }
   }
 
-  return candidate.data?.info ?? candidate.info
+  const info = candidate.data?.info ?? candidate.info
+  if (!info) {
+    return undefined
+  }
+
+  return {
+    structured_output: info.structured_output ?? info.structured,
+    error: info.error
+      ? {
+          name: info.error.name,
+          message: info.error.message ?? info.error.data?.message,
+        }
+      : undefined,
+  }
 }
 
 function extractTextFromParts(parts: Array<{ type: string; text?: string }>): string {
@@ -299,3 +322,7 @@ function extractTextFromParts(parts: Array<{ type: string; text?: string }>): st
 }
 
 export type { OpencodeClient }
+
+export const __test__ = {
+  getStructuredOutputInfo,
+}
