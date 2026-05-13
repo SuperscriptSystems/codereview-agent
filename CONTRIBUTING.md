@@ -27,7 +27,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 * Install dependencies:
 
   ```bash
-  poetry install
+  npm install
   ```
 
 ### 3. Create a Branch
@@ -49,7 +49,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 Ensure all tests pass before committing.
 
 ```bash
-pytest
+npm test
 ```
 
 ### 6. Commit and Push
@@ -75,8 +75,7 @@ pytest
 * Run linting and formatting before submitting:
 
   ```bash
-  black .
-  flake8
+  npm run build
   ```
 
 ---

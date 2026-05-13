@@ -3,187 +3,82 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-AI-powered, context-aware code review agent powered by Large Language Models. This CLI tool performs a multi-phase analysis of your local Git repositories to provide deep, relevant, and actionable feedback on your code changes, mimicking the workflow of an expert human reviewer.
+AI-powered, context-aware code review tooling for local repositories and pull requests.
 
-The agent is **pragmatic** — it focuses on concrete bugs and significant improvements while avoiding unhelpful, speculative, or redundant comments.
+## Status
 
----
+The active implementation is the root TypeScript reviewer.
 
-## 📑 Table of Contents
+- Source code lives in `src/`
+- OpenCode runtime config lives in `opencode.json`
+- Reviewer-specific settings live in `review-config.json`
+- `.codereview.yml` is kept only as temporary legacy migration reference
 
-* [Key Features](#-key-features)
-* [Quick Start](#-quick-start)
-* [Installation](#-installation)
-* [Usage](#-usage)
-* [Configuration](#-configuration)
-* [CI/CD Integration](#-cicd-integration)
-* [Contributing](#-contributing)
-* [License](#-license)
-
----
-
-## 🌟 Key Features
-
-* 🧠 **Smart Context Building**: Beyond simple diffs, uses:
-
-  * **Static Analysis (Tree-sitter)** to detect dependencies.
-  * **Layered LLM Analysis** to request additional files intelligently.
-* 🤖 **LLM Agnostic**: Works with any OpenAI-compatible API (OpenRouter by default).
-* 🔧 **Highly Configurable**: Customize review rules, focus areas, and filtering via `.codereview.yml`.
-* 💻 **Local First**: CLI tool runs directly on your local Git repository — perfect for pre-commit checks.
-* 🚀 **CI/CD Ready**: Distributed as a Docker image, integrates easily with Bitbucket Pipelines and GitHub Actions.
-* 🗣️ **Jira Integration**: Fetches Jira task context and posts assessments back after merge.
-* ✨ **Clean PRs**: Removes outdated comments automatically for a cleaner review history.
-
----
-
-## ⚡ Quick Start
+## Quick Start
 
 ```bash
 git clone https://github.com/<your-org>/codereview-agent
 cd codereview-agent
-poetry install
-poetry run code-review-agent review
+npm install
+npm run review -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 ```
 
----
+## Usage
 
-## 🛠️ Installation
-
-This project is managed with [Poetry](https://python-poetry.org).
-
-1. Clone the repository:
-
-   ```bash
-   git clone <your-repository-url>
-   cd codereview-agent
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   poetry install
-   ```
-
----
-
-## 🚀 Usage
-
-Run from within the Poetry environment.
-
-**Basic Review (Last Commit)**
+Review the last commit range:
 
 ```bash
-poetry run code-review-agent review
+npm run review -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 ```
 
-**Review a Branch or Commit Range**
+Review staged files:
 
 ```bash
-poetry run code-review-agent review --base-ref main --head-ref my-feature-branch
+npm run review -- --repo-path . --staged
 ```
 
-**Pre-commit Review (Staged Files)**
+Verify reviewer auth and connectivity:
 
 ```bash
-poetry run code-review-agent review --staged
+npm run check:reviewer -- --repo-path . --trace
 ```
 
-**Focus on Specific Areas**
+Run Jira assessment:
 
 ```bash
-poetry run code-review-agent review --focus Security --focus LogicError
+npm run assess -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 ```
 
-**Enable Verbose Debugging**
+## Configuration
+
+OpenCode runtime settings live in `opencode.json`.
+
+Reviewer-specific settings live in `review-config.json`.
+
+Key config fields:
+
+- `review.maxContextFiles`
+- `review.focusAreas`
+- `review.customRules`
+- `review.filtering`
+- `review.testKeywords`
+
+Optional integrations use these environment variables:
+
+- Jira: `JIRA_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`
+- GitHub: `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `GITHUB_PR_NUMBER`
+- Bitbucket: `BITBUCKET_APP_USERNAME`, `BITBUCKET_APP_PASSWORD`, `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_PR_ID`
+
+## Quality Checks
 
 ```bash
-poetry run code-review-agent review --trace
+npm test
+npm run build
 ```
-
-*(Focus options: LogicError, CodeStyle, Security, Suggestion, TestCoverage, Clarity, Performance, Other)*
-
----
-
-## ⚙️ Configuration
-
-### 1. Environment Variables (.env)
-
-Create a `.env` file at the root:
-
-```env
-LLM_API_KEY="sk-or-..."
-
-# Bitbucket Integration
-BITBUCKET_APP_USERNAME="my-bitbucket-username"
-BITBUCKET_APP_PASSWORD="your_app_password"
-
-# Jira Integration (optional)
-JIRA_URL="https://your-company.atlassian.net"
-JIRA_USER_EMAIL="your-email@company.com"
-JIRA_API_TOKEN="your_jira_api_token"
-```
-
-### 2. Project Configuration (.codereview\.yml)
-
-Example config:
-
-```yaml
-llm:
-  provider: "openai"
-  models:
-    context_builder: "gpt-4o"
-    reviewer: "gpt-4o"
-    assessor: "gpt-4o"
-
-max_context_files: 25
-
-filtering:
-  ignored_extensions:
-    - '.dll'
-    - '.so'
-    - '.exe'
-    - '.png'
-    - '.jpg'
-    - '.jpeg'
-    - '.gif'
-    - '.svg'
-    - '.min.js'
-    - '.lock'
-    - '.zip'
-    - '.o'
-    - '.a'
-    - '.obj'
-    - '.lib'
-    - '.pdb'
-
-  ignored_paths:
-    - 'node_modules'
-    - 'venv'
-    - '.venv'
-    - '.git'
-    - '__pycache__'
-    - 'dist'
-    - 'build'
-    - 'target'
-    - '.next'
-    - '.pytest_cache'
-
-test_keywords: ['test', 'spec', 'fixture']
-
-review_focus:
-  - "Security"
-  - "Performance"
-  - "LogicError"
-
-review_rules:
-  - "All public functions must have a docstring."
-  - "Pay close attention to potential N+1 query problems."
-```
-
----
 
 ## 🔄 CI/CD Integration
+
+Legacy / pending migration: the examples below still describe the old Docker-based integration path and have not yet been rewritten for the root TypeScript reviewer.
 
 Distributed as a public Docker image: `umykhailo/codereviewagent:latest`
 

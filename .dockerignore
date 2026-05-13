@@ -1,0 +1,10 @@
+.git
+.github
+node_modules
+dist
+.env
+.DS_Store
+.pytest_cache
+poetry.lock
+.codereview.yml
+tests

@@ -1,0 +1,19 @@
+FROM node:20-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g opencode-ai@1.14.48
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.json opencode.json review-config.json ./
+COPY src ./src
+COPY prompts ./prompts
+
+RUN npm ci
+
+ENV OPENCODE_DISABLE_AUTOUPDATE=true
+
+ENTRYPOINT ["npx", "tsx", "src/cli.ts"]

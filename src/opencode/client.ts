@@ -1,0 +1,251 @@
+import { mkdtemp, rm } from "node:fs/promises"
+import { createServer } from "node:net"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { spawn } from "node:child_process"
+
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
+
+export interface OpencodeSessionClient {
+  createSession(title: string): Promise<string>
+  promptText(sessionId: string, options: { agent: string; system?: string; prompt: string }): Promise<string>
+  close(): void
+}
+
+export async function createSessionClient(config: Record<string, unknown>, directory?: string): Promise<OpencodeSessionClient> {
+  const port = await getAvailablePort()
+  const server = await startIsolatedOpencodeServer(sanitizeOpencodeServerConfig(config), port)
+  const client = createOpencodeClient({
+    baseUrl: server.url,
+    directory,
+  })
+
+  return {
+    async createSession(title: string): Promise<string> {
+      const response = await client.session.create({
+        body: { title },
+      })
+      const data = getResponseData<{ id?: string }>(response)
+
+      if (!data?.id) {
+        throw new Error(buildOpencodeErrorMessage("create a session", response, "OpenCode did not return a session payload."))
+      }
+
+      return data.id
+    },
+    async promptText(sessionId: string, options: { agent: string; system?: string; prompt: string }): Promise<string> {
+      const response = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          agent: options.agent,
+          system: options.system,
+          parts: [{ type: "text", text: options.prompt }],
+        },
+      })
+      const data = getResponseData<{ parts?: Array<{ type: string; text?: string }> }>(response)
+
+      if (!data?.parts) {
+        throw new Error(buildOpencodeErrorMessage("run a prompt", response, "OpenCode did not return a prompt response payload."))
+      }
+
+      return extractTextFromParts(data.parts)
+    },
+    close(): void {
+      server.close()
+    },
+  }
+}
+
+async function startIsolatedOpencodeServer(config: Record<string, unknown>, port: number): Promise<{ url: string; close(): void }> {
+  const cwd = await mkdtemp(path.join(tmpdir(), "code-review-agent-opencode-"))
+  const proc = spawn("opencode", ["serve", `--hostname=127.0.0.1`, `--port=${port}`], {
+    cwd,
+    env: {
+      ...process.env,
+      OPENCODE_SERVER_PASSWORD: "",
+      OPENCODE_SERVER_USERNAME: "",
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+    },
+  })
+
+  let settled = false
+  let output = ""
+  const url = await new Promise<string>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      proc.kill()
+      reject(new Error(`Timeout waiting for OpenCode server startup on port ${port}`))
+    }, 5000)
+
+    proc.stdout?.on("data", (chunk) => {
+      if (settled) {
+        return
+      }
+
+      output += chunk.toString()
+      const lines = output.split("\n")
+      for (const line of lines) {
+        if (!line.startsWith("opencode server listening")) {
+          continue
+        }
+
+        const match = line.match(/on\s+(https?:\/\/[^\s]+)/)
+        if (!match) {
+          settled = true
+          clearTimeout(timeoutId)
+          proc.kill()
+          reject(new Error(`Failed to parse OpenCode server URL from output: ${line}`))
+          return
+        }
+
+        settled = true
+        clearTimeout(timeoutId)
+        resolve(match[1])
+        return
+      }
+    })
+
+    proc.stderr?.on("data", (chunk) => {
+      output += chunk.toString()
+    })
+
+    proc.on("error", (error) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeoutId)
+      reject(error)
+    })
+
+    proc.on("exit", (code) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      clearTimeout(timeoutId)
+      const details = output.trim() ? `\nServer output: ${output}` : ""
+      reject(new Error(`Server exited with code ${code}${details}`))
+    })
+  })
+
+  return {
+    url,
+    close(): void {
+      proc.kill()
+      void rm(cwd, { recursive: true, force: true })
+    },
+  }
+}
+
+async function getAvailablePort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer()
+
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not determine an available OpenCode server port.")))
+        return
+      }
+
+      const { port } = address
+      server.close((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+
+        resolve(port)
+      })
+    })
+  })
+}
+
+function sanitizeOpencodeServerConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const { review: _review, __configDir, ...serverConfig } = config as Record<string, unknown> & { __configDir?: string }
+  return resolveFileReferences(serverConfig, typeof __configDir === "string" ? __configDir : process.cwd()) as Record<string, unknown>
+}
+
+function resolveFileReferences(value: unknown, configDir: string): unknown {
+  if (typeof value === "string") {
+    const match = value.match(/^\{file:(.+)\}$/)
+    if (!match) {
+      return value
+    }
+
+    const filePath = match[1]?.trim()
+    if (!filePath) {
+      return value
+    }
+
+    if (path.isAbsolute(filePath) || filePath.startsWith("~")) {
+      return value
+    }
+
+    return `{file:${path.resolve(configDir, filePath)}}`
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveFileReferences(item, configDir))
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [key, resolveFileReferences(nestedValue, configDir)]),
+    )
+  }
+
+  return value
+}
+
+function getResponseData<T>(response: unknown): T | undefined {
+  if (!response || typeof response !== "object") {
+    return undefined
+  }
+
+  const candidate = response as { data?: T; error?: unknown }
+  if (candidate.error) {
+    return undefined
+  }
+
+  if (candidate.data !== undefined) {
+    return candidate.data
+  }
+
+  return response as T
+}
+
+function buildOpencodeErrorMessage(action: string, response: unknown, fallback: string): string {
+  if (!response || typeof response !== "object") {
+    return fallback
+  }
+
+  const candidate = response as {
+    error?: unknown
+    response?: { status?: number; statusText?: string }
+  }
+
+  if (!candidate.error) {
+    return fallback
+  }
+
+  const errorText = typeof candidate.error === "string" ? candidate.error : JSON.stringify(candidate.error)
+  const status = candidate.response?.status
+  const statusText = candidate.response?.statusText
+  const details = [status, statusText].filter(Boolean).join(" ")
+
+  return details ? `OpenCode failed to ${action}: ${errorText} (${details})` : `OpenCode failed to ${action}: ${errorText}`
+}
+
+function extractTextFromParts(parts: Array<{ type: string; text?: string }>): string {
+  return parts
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n")
+    .trim()
+}
+
+export type { OpencodeClient }

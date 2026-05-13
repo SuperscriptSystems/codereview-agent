@@ -1,0 +1,59 @@
+{
+  "maxContextFiles": 25,
+  "focusAreas": [
+    "LogicError",
+    "Security",
+    "Performance",
+    "TestCoverage"
+  ],
+  "customRules": [],
+  "testKeywords": [
+    "test",
+    "tests",
+    "spec",
+    "fixture"
+  ],
+  "filtering": {
+    "ignoredExtensions": [
+      ".dll",
+      ".so",
+      ".exe",
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".svg",
+      ".min.js",
+      ".lock",
+      ".zip",
+      ".o",
+      ".a",
+      ".obj",
+      ".lib",
+      ".pdb"
+    ],
+    "ignoredPaths": [
+      "node_modules",
+      "venv",
+      ".venv",
+      ".git",
+      "__pycache__",
+      "dist",
+      "build",
+      "target",
+      ".next",
+      ".pytest_cache"
+    ],
+    "ignoredPatterns": [
+      "Designer.cs",
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "poetry.lock",
+      "package.json"
+    ]
+  },
+  "contextCleanup": {
+    "enabled": false
+  }
+}
