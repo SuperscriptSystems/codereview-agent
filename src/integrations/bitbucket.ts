@@ -16,7 +16,7 @@ export async function cleanupAndPostAllComments(
   }
 
   const auth = Buffer.from(`${username}:${password}`).toString("base64")
-  const api = async (path: string, init?: RequestInit): Promise<unknown> => {
+  const api = async (path: string, init?: RequestInit, allowedStatuses: number[] = []): Promise<unknown> => {
     const url = path.startsWith("http://") || path.startsWith("https://") ? path : `https://api.bitbucket.org/2.0${path}`
     const response = await fetch(url, {
       ...init,
@@ -27,7 +27,7 @@ export async function cleanupAndPostAllComments(
       },
     })
 
-    if (!response.ok && response.status !== 404) {
+    if (!response.ok && response.status !== 404 && !allowedStatuses.includes(response.status)) {
       const body = await response.text()
       throw new Error(`Bitbucket API ${path} failed: ${response.status} ${body}`)
     }
@@ -50,11 +50,11 @@ export async function cleanupAndPostAllComments(
       method: "POST",
       body: JSON.stringify({ content: { raw: "Excellent work! The AI agent didn't find any issues. Keep up the great contributions!" } }),
     })
-    await api(`${basePath}/approve`, { method: "POST" })
+    await api(`${basePath}/approve`, { method: "POST" }, [400])
     return
   }
 
-  await api(`${basePath}/approve`, { method: "DELETE" })
+  await api(`${basePath}/approve`, { method: "DELETE" }, [400])
 
   for (const [filePath, issues] of Object.entries(filesWithIssues)) {
     for (const issue of issues) {
