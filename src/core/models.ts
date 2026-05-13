@@ -14,13 +14,13 @@ export const issueTypeValues = [
 export const issueTypeSchema = z.enum(issueTypeValues)
 export type IssueType = z.infer<typeof issueTypeSchema>
 
-export const codeIssueSchema = z.object({
+export const codeIssueSchema = z.preprocess((value) => normalizeCodeIssue(value), z.object({
   filePath: z.string(),
   lineNumber: z.number().int().nonnegative(),
   issueType: issueTypeSchema,
   comment: z.string(),
   suggestion: z.string().optional(),
-})
+}))
 export type CodeIssue = z.infer<typeof codeIssueSchema>
 
 export const reviewResultSchema = z.object({
@@ -92,3 +92,19 @@ export type FileContentMap = Record<string, string>
 export const reviewIssuesEnvelopeSchema = z.object({
   issues: z.array(codeIssueSchema),
 })
+
+function normalizeCodeIssue(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value
+  }
+
+  const candidate = value as Record<string, unknown>
+
+  return {
+    ...candidate,
+    filePath: candidate.filePath ?? candidate.file,
+    lineNumber: candidate.lineNumber ?? candidate.line,
+    issueType: candidate.issueType ?? candidate.type,
+    comment: candidate.comment ?? candidate.description,
+  }
+}

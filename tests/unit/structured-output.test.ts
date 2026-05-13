@@ -40,4 +40,18 @@ describe("structured output parser", () => {
       ],
     })
   })
+
+  it("normalizes alternate reviewer issue field names", () => {
+    const text = `Review complete.\n${structuredOutputMarkers.begin}\n{"issues":[{"file":"src/app.ts","line":12,"type":"LogicError","description":"Broken null handling"}]}\n${structuredOutputMarkers.end}`
+    expect(parseStructuredOutput(text, reviewIssuesEnvelopeSchema, { issues: [] })).toEqual({
+      issues: [
+        {
+          filePath: "src/app.ts",
+          lineNumber: 12,
+          issueType: "LogicError",
+          comment: "Broken null handling",
+        },
+      ],
+    })
+  })
 })
