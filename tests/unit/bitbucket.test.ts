@@ -144,6 +144,37 @@ describe("bitbucket integration", () => {
     await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined()
   })
 
+  it("does not fail when approval endpoints return plain-text error bodies", async () => {
+    const issue: CodeIssue = {
+      filePath: "src/main.ts",
+      lineNumber: 12,
+      issueType: "Security",
+      comment: "Unsafe behavior",
+    }
+
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? "GET"
+
+      if (url.endsWith("/user")) {
+        return makeResponse(200, { account_id: "acct-1" })
+      }
+
+      if (url.includes("/comments") && method === "GET") {
+        return makeResponse(200, { values: [] })
+      }
+
+      if (url.endsWith("/approve")) {
+        return makeResponse(400, undefined, "Bad Request")
+      }
+
+      return makeResponse(201, { id: 1 })
+    }) as typeof fetch
+
+    await expect(cleanupAndPostAllComments([issue], { "src/main.ts": [issue] })).resolves.toBeUndefined()
+    await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined()
+  })
+
   it("cleans up bot comments across paginated comment results", async () => {
     const calls: Array<{ url: string; method: string; body?: string }> = []
 

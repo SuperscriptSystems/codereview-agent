@@ -37,7 +37,16 @@ export async function cleanupAndPostAllComments(
     }
 
     const text = await response.text()
-    return text ? (JSON.parse(text) as unknown) : null
+
+    if (!text) {
+      return null
+    }
+
+    try {
+      return JSON.parse(text) as unknown
+    } catch {
+      return text
+    }
   }
 
   const basePath = `/repositories/${workspace}/${repoSlug}/pullrequests/${prId}`
