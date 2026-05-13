@@ -105,6 +105,6 @@ function normalizeCodeIssue(value: unknown): unknown {
     filePath: candidate.filePath ?? candidate.file,
     lineNumber: candidate.lineNumber ?? candidate.line,
     issueType: candidate.issueType ?? candidate.type,
-    comment: candidate.comment ?? candidate.description,
+    comment: candidate.comment ?? candidate.description ?? candidate.message,
   }
 }
