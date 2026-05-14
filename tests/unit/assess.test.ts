@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const { closeMock } = vi.hoisted(() => ({
-  closeMock: vi.fn(),
+  closeMock: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock("../../src/config/load-config.ts", () => ({

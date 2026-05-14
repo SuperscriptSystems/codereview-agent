@@ -40,7 +40,7 @@ export async function runCheckReviewerCommand(options: CheckReviewerCommandOptio
     const message = error instanceof Error ? error.message : String(error)
     logger.error(`Reviewer connectivity check failed: ${message}`)
   } finally {
-    client.close()
+    await client.close()
   }
 }
 

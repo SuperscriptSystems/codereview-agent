@@ -14,7 +14,7 @@ export interface OpencodeSessionClient {
     sessionId: string,
     options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown>; retryCount?: number },
   ): Promise<T>
-  close(): void
+  close(): Promise<void>
 }
 
 export async function createSessionClient(config: Record<string, unknown>, directory?: string): Promise<OpencodeSessionClient> {
@@ -112,13 +112,13 @@ export async function createSessionClient(config: Record<string, unknown>, direc
 
       return info.structured_output as T
     },
-    close(): void {
-      server.close()
+    async close(): Promise<void> {
+      await server.close()
     },
   }
 }
 
-async function startIsolatedOpencodeServer(config: Record<string, unknown>, port: number): Promise<{ url: string; close(): void }> {
+async function startIsolatedOpencodeServer(config: Record<string, unknown>, port: number): Promise<{ url: string; close(): Promise<void> }> {
   const cwd = await mkdtemp(path.join(tmpdir(), "code-review-agent-opencode-"))
   const proc = spawn("opencode", ["serve", `--hostname=127.0.0.1`, `--port=${port}`], {
     cwd,
@@ -194,11 +194,48 @@ async function startIsolatedOpencodeServer(config: Record<string, unknown>, port
 
   return {
     url,
-    close(): void {
-      proc.kill()
-      void rm(cwd, { recursive: true, force: true })
+    async close(): Promise<void> {
+      await shutdownChildProcess(proc)
+      await rm(cwd, { recursive: true, force: true })
     },
   }
+}
+
+async function shutdownChildProcess(proc: ReturnType<typeof spawn>): Promise<void> {
+  if (proc.exitCode !== null || proc.killed) {
+    return
+  }
+
+  const exited = waitForProcessExit(proc)
+  proc.kill("SIGTERM")
+
+  const terminated = await Promise.race([
+    exited.then(() => true),
+    wait(3000).then(() => false),
+  ])
+
+  if (terminated) {
+    return
+  }
+
+  proc.kill("SIGKILL")
+  await Promise.race([
+    exited,
+    wait(2000),
+  ])
+}
+
+function waitForProcessExit(proc: ReturnType<typeof spawn>): Promise<void> {
+  return new Promise((resolve) => {
+    proc.once("exit", () => resolve())
+    proc.once("error", () => resolve())
+  })
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }
 
 async function getAvailablePort(): Promise<number> {

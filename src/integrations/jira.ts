@@ -19,7 +19,7 @@ export async function getTaskDetails(taskId: string): Promise<JiraTaskDetails | 
     const headers = getHeaders()
 
     for (const apiVersion of ["2", "3"]) {
-      const response = await fetch(`${jiraUrl}/rest/api/${apiVersion}/issue/${taskId.toUpperCase()}`, {
+      const response = await jiraFetch(`${jiraUrl}/rest/api/${apiVersion}/issue/${taskId.toUpperCase()}`, {
         headers,
       })
 
@@ -67,9 +67,6 @@ export async function addComment(taskId: string, comment: string | Record<string
     const legacyMarkers = ["🤖 AI Assessment Complete", "🤖 AI Assessment"]
     const allMarkers = [primaryMarkerRaw, ...legacyMarkers.filter((marker) => marker !== primaryMarkerRaw)]
 
-    const accountId = await getCurrentAccountId()
-    await removePreviousAiComments(jiraUrl, taskId, allMarkers, accountId)
-
     let targetVersion = "2"
     let body: string | Record<string, unknown> = comment
 
@@ -83,7 +80,19 @@ export async function addComment(taskId: string, comment: string | Record<string
       ensureAdfMarker(comment, primaryMarkerClean)
     }
 
-    const response = await fetch(`${jiraUrl}/rest/api/${targetVersion}/issue/${taskId}/comment`, {
+    const accountId = await getCurrentAccountId()
+    const expectedSignature = normalizeCommentSignature(body)
+    const existingComments = await fetchComments(jiraUrl, taskId)
+
+    if (hasMatchingAiComment(existingComments, allMarkers, accountId, expectedSignature)) {
+      logger.info(`Skipping Jira comment for ${taskId} because the same AI assessment already exists.`)
+      await removeDuplicateComments(jiraUrl, taskId, existingComments, allMarkers, accountId, expectedSignature)
+      return
+    }
+
+    await removePreviousAiComments(jiraUrl, taskId, existingComments, allMarkers, accountId)
+
+    const response = await jiraFetch(`${jiraUrl}/rest/api/${targetVersion}/issue/${taskId}/comment`, {
       method: "POST",
       headers,
       body: JSON.stringify({ body }),
@@ -91,7 +100,11 @@ export async function addComment(taskId: string, comment: string | Record<string
 
     if (!response.ok) {
       logger.warn(`Failed to add Jira comment. Status ${response.status}.`)
+      return
     }
+
+    const commentsAfterPost = await fetchComments(jiraUrl, taskId)
+    await removeDuplicateComments(jiraUrl, taskId, commentsAfterPost, allMarkers, accountId, expectedSignature)
   } catch (error) {
     logger.warn(`Failed to add Jira comment: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -110,7 +123,7 @@ export function buildJiraDetailsText(taskId: string, details: JiraTaskDetails): 
 async function fetchProjectKeys(): Promise<Set<string>> {
   try {
     const jiraUrl = getJiraUrl()
-    const response = await fetch(`${jiraUrl}/rest/api/3/project/search`, {
+    const response = await jiraFetch(`${jiraUrl}/rest/api/3/project/search`, {
       headers: getHeaders(),
     })
 
@@ -177,7 +190,7 @@ function extractDescription(description: unknown): string {
 
 async function getCurrentAccountId(): Promise<string | null> {
   try {
-    const response = await fetch(`${getJiraUrl()}/rest/api/3/myself`, {
+    const response = await jiraFetch(`${getJiraUrl()}/rest/api/3/myself`, {
       headers: getHeaders(),
     })
 
@@ -195,40 +208,89 @@ async function getCurrentAccountId(): Promise<string | null> {
 async function removePreviousAiComments(
   jiraUrl: string,
   taskId: string,
+  comments: JiraComment[],
   markers: string[],
   accountId: string | null,
 ): Promise<void> {
   try {
-    const response = await fetch(`${jiraUrl}/rest/api/3/issue/${taskId}/comment?maxResults=100`, {
-      headers: getHeaders(),
-    })
-
-    if (!response.ok) {
-      return
-    }
-
-    const data = (await response.json()) as {
-      comments?: Array<{ id?: string; author?: { accountId?: string }; body?: unknown }>
-    }
-
-    for (const comment of data.comments ?? []) {
-      const bodyText = extractBodyText(comment.body)
-      const bodyNormalized = normalizeMarker(bodyText)
-      const matchesMarker = markers.map(normalizeMarker).some((marker) => bodyNormalized.includes(marker))
-      const sameAuthor = !accountId || comment.author?.accountId === accountId
-
-      if (!matchesMarker || !sameAuthor || !comment.id) {
+    for (const comment of comments) {
+      if (!isManagedAiComment(comment, markers, accountId) || !comment.id) {
         continue
       }
 
-      await fetch(`${jiraUrl}/rest/api/3/issue/${taskId}/comment/${comment.id}`, {
-        method: "DELETE",
-        headers: getHeaders(),
-      })
+      await deleteComment(jiraUrl, taskId, comment.id)
     }
   } catch {
     logger.debug("Skipping Jira AI comment cleanup because comment listing failed.")
   }
+}
+
+type JiraComment = {
+  id?: string
+  author?: { accountId?: string }
+  body?: unknown
+}
+
+async function fetchComments(jiraUrl: string, taskId: string): Promise<JiraComment[]> {
+  try {
+    const response = await jiraFetch(`${jiraUrl}/rest/api/3/issue/${taskId}/comment?maxResults=100`, {
+      headers: getHeaders(),
+    })
+
+    if (!response.ok) {
+      return []
+    }
+
+    const data = (await response.json()) as { comments?: JiraComment[] }
+    return data.comments ?? []
+  } catch {
+    return []
+  }
+}
+
+async function removeDuplicateComments(
+  jiraUrl: string,
+  taskId: string,
+  comments: JiraComment[],
+  markers: string[],
+  accountId: string | null,
+  expectedSignature: string,
+): Promise<void> {
+  const duplicates = comments.filter((comment) => {
+    return isManagedAiComment(comment, markers, accountId)
+      && normalizeCommentSignature(comment.body) === expectedSignature
+      && Boolean(comment.id)
+  })
+
+  for (const comment of duplicates.slice(1)) {
+    await deleteComment(jiraUrl, taskId, comment.id as string)
+  }
+}
+
+function hasMatchingAiComment(
+  comments: JiraComment[],
+  markers: string[],
+  accountId: string | null,
+  expectedSignature: string,
+): boolean {
+  return comments.some((comment) => {
+    return isManagedAiComment(comment, markers, accountId) && normalizeCommentSignature(comment.body) === expectedSignature
+  })
+}
+
+function isManagedAiComment(comment: JiraComment, markers: string[], accountId: string | null): boolean {
+  const bodyText = extractBodyText(comment.body)
+  const bodyNormalized = normalizeMarker(bodyText)
+  const matchesMarker = markers.map(normalizeMarker).some((marker) => bodyNormalized.includes(marker))
+  const sameAuthor = !accountId || comment.author?.accountId === accountId
+  return matchesMarker && sameAuthor
+}
+
+async function deleteComment(jiraUrl: string, taskId: string, commentId: string): Promise<void> {
+  await jiraFetch(`${jiraUrl}/rest/api/3/issue/${taskId}/comment/${commentId}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  })
 }
 
 function extractBodyText(body: unknown): string {
@@ -245,6 +307,27 @@ function extractBodyText(body: unknown): string {
 
 function normalizeMarker(text: string): string {
   return text.replaceAll("*", "").trim()
+}
+
+function normalizeCommentSignature(body: unknown): string {
+  const raw = typeof body === "string" ? body : extractBodyText(body)
+  return normalizeMarker(raw).replace(/\s+/g, " ").trim()
+}
+
+function jiraFetch(input: string, init?: RequestInit): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(getJiraFetchTimeoutMs()),
+  })
+}
+
+function getJiraFetchTimeoutMs(): number {
+  const parsed = Number(process.env.JIRA_FETCH_TIMEOUT_MS)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 15000
+  }
+
+  return parsed
 }
 
 function ensureAdfMarker(comment: Record<string, unknown>, markerText: string): void {

@@ -67,7 +67,7 @@ describe("review command", () => {
   const sessionClient = {
     createSession: vi.fn(),
     promptText: vi.fn(),
-    close: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
   }
 
   beforeEach(() => {

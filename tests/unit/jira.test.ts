@@ -73,4 +73,48 @@ describe("jira comments", () => {
     expect(calls.post).toHaveLength(1)
     expect(calls.post[0]?.body).toContain("*🤖 AI Assessment Complete*")
   })
+
+  it("skips posting when the same AI assessment already exists", async () => {
+    const calls: { get: string[]; delete: string[]; post: Array<{ url: string; body: string }> } = {
+      get: [],
+      delete: [],
+      post: [],
+    }
+
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? "GET"
+
+      if (method === "GET") {
+        calls.get.push(url)
+        if (url.endsWith("/myself")) {
+          return makeResponse(200, { accountId: "acct-1" })
+        }
+        if (url.includes(`/issue/${taskId}/comment`)) {
+          return makeResponse(200, {
+            comments: [
+              { id: "11", author: { accountId: "acct-1" }, body: "*🤖 AI Assessment Complete*\n\nRelevance: *85%*\n\nJustification: test" },
+            ],
+          })
+        }
+      }
+
+      if (method === "DELETE") {
+        calls.delete.push(url)
+        return makeResponse(204)
+      }
+
+      if (method === "POST") {
+        calls.post.push({ url, body: String(init?.body ?? "") })
+        return makeResponse(201, { id: "900" })
+      }
+
+      return makeResponse(404)
+    }) as typeof fetch
+
+    await addComment(taskId, "Relevance: *85%*\n\nJustification: test")
+
+    expect(calls.post).toHaveLength(0)
+    expect(calls.delete).toHaveLength(0)
+  })
 })

@@ -30,7 +30,7 @@ describe("check-reviewer command", () => {
     listAgents: vi.fn(),
     createSession: vi.fn(),
     promptStructured: vi.fn(),
-    close: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
   }
 
   beforeEach(() => {

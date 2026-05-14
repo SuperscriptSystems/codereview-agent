@@ -77,7 +77,7 @@ export async function runAssessCommand(options: AssessCommandOptions): Promise<v
     const message = error instanceof Error ? error.message : String(error)
     logger.error(`Assess execution failed: ${message}`)
   } finally {
-    client.close()
+    await client.close()
   }
 
   logger.info(`Repo: ${repoPath}`)

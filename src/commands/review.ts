@@ -104,7 +104,7 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
     logger.error("Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.")
     throw error
   } finally {
-    sessionClient.close()
+    await sessionClient.close()
   }
 }
 
