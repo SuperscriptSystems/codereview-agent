@@ -8,6 +8,7 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
 
 export interface OpencodeSessionClient {
   createSession(title: string): Promise<string>
+  listAgents(): Promise<string[]>
   promptText(sessionId: string, options: { agent: string; system?: string; prompt: string }): Promise<string>
   promptStructured<T>(
     sessionId: string,
@@ -37,6 +38,22 @@ export async function createSessionClient(config: Record<string, unknown>, direc
 
       return data.id
     },
+    async listAgents(): Promise<string[]> {
+      const response = await client.app.agents()
+      const data = getResponseData<Array<{ name?: string }>>(response)
+
+      if (!Array.isArray(data)) {
+        throw new Error(buildOpencodeErrorMessage(
+          "list available agents",
+          response,
+          "OpenCode did not return an agent list payload.",
+        ))
+      }
+
+      return data
+        .flatMap((agent) => typeof agent?.name === "string" ? [agent.name] : [])
+        .sort((left, right) => left.localeCompare(right))
+    },
     async promptText(sessionId: string, options: { agent: string; system?: string; prompt: string }): Promise<string> {
       const response = await client.session.prompt({
         path: { id: sessionId },
@@ -58,6 +75,7 @@ export async function createSessionClient(config: Record<string, unknown>, direc
       sessionId: string,
       options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown>; retryCount?: number },
     ): Promise<T> {
+      // The OpenCode server accepts `format` for structured output, but the SDK type here lags behind the API.
       const response = await client.session.prompt({
         path: { id: sessionId },
         body: {
@@ -69,8 +87,8 @@ export async function createSessionClient(config: Record<string, unknown>, direc
             retryCount: options.retryCount ?? 3,
             schema: options.schema,
           },
-        },
-      })
+        } as unknown as Parameters<typeof client.session.prompt>[0]["body"],
+      } as Parameters<typeof client.session.prompt>[0])
 
       const info = getStructuredOutputInfo(response)
       if (info?.error?.name === "StructuredOutputError") {

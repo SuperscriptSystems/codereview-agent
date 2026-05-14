@@ -2,6 +2,32 @@ import type { ChangedFileMap, IssueType, ReviewResult } from "../core/models.js"
 import { reviewIssuesEnvelopeJsonSchema, reviewIssuesEnvelopeSchema } from "../core/models.js"
 import type { OpencodeSessionClient } from "../opencode/client.js"
 
+export const preferredReviewAgent = "reviewer"
+export const fallbackReviewAgent = "general"
+
+export const reviewerSystemPrompt = [
+  "You are a ready-to-use code reviewer.",
+  "",
+  "Review only the provided change scope and report only concrete, high-confidence issues in the changed behavior.",
+  "",
+  "Rules:",
+  "- Use available tools to inspect repository context as needed.",
+  "- Do not modify files.",
+  "- Stay within the provided review scope.",
+  "- Use `git diff`, `git log`, `git show`, and `git status` only for inspection.",
+  "- Focus on bugs, regressions, security problems, performance risks, and missing test coverage for new logic.",
+  "- Comment only when there is enough evidence in the diff and inspected repository context.",
+  "- If project skill files are listed in the prompt, inspect only relevant ones when project-specific guidance is needed.",
+  "- Do not report compiler, linter, formatting, or speculative issues.",
+  "- Prefer fewer, stronger findings over many weak comments.",
+  "- Scope each finding to a changed file and use the new line number.",
+  "- Return issues only.",
+  "",
+  "When project-specific rules are provided, apply them in addition to the rules above.",
+  "",
+  "Return only structured JSON.",
+].join("\n")
+
 export interface RunReviewInput {
   repoPath: string
   staged: boolean
@@ -15,14 +41,19 @@ export interface RunReviewInput {
   focusAreas: IssueType[]
 }
 
+export interface ResolvedReviewAgent {
+  name: string
+  system?: string
+  availableAgents: string[]
+  fallbackUsed: boolean
+  discoveryFailed: boolean
+}
+
 export async function runReview(client: OpencodeSessionClient, input: RunReviewInput): Promise<Record<string, ReviewResult>> {
+  const resolvedAgent = await resolveReviewAgent(client)
   const sessionId = await client.createSession("reviewer")
   const prompt = buildReviewPrompt(input)
-  const envelope = reviewIssuesEnvelopeSchema.parse(await client.promptStructured(sessionId, {
-    agent: "reviewer",
-    prompt,
-    schema: reviewIssuesEnvelopeJsonSchema,
-  }))
+  const envelope = reviewIssuesEnvelopeSchema.parse(await promptReviewIssues(client, sessionId, prompt, resolvedAgent))
 
   const issuesByFile = new Map<string, ReviewResult["issues"]>()
 
@@ -39,6 +70,77 @@ export async function runReview(client: OpencodeSessionClient, input: RunReviewI
   return Object.fromEntries(
     Object.keys(input.changedFilesMap).map((filePath) => [filePath, { issues: issuesByFile.get(filePath) ?? [] }]),
   )
+}
+
+export async function resolveReviewAgent(client: OpencodeSessionClient): Promise<ResolvedReviewAgent> {
+  let availableAgents: string[]
+
+  try {
+    availableAgents = await client.listAgents()
+  } catch {
+    return {
+      name: preferredReviewAgent,
+      availableAgents: [],
+      fallbackUsed: false,
+      discoveryFailed: true,
+    }
+  }
+
+  if (availableAgents.includes(preferredReviewAgent)) {
+    return {
+      name: preferredReviewAgent,
+      availableAgents,
+      fallbackUsed: false,
+      discoveryFailed: false,
+    }
+  }
+
+  if (availableAgents.includes(fallbackReviewAgent)) {
+    return {
+      name: fallbackReviewAgent,
+      system: reviewerSystemPrompt,
+      availableAgents,
+      fallbackUsed: true,
+      discoveryFailed: false,
+    }
+  }
+
+  const listedAgents = availableAgents.length > 0 ? availableAgents.join(", ") : "none"
+  throw new Error(
+    `OpenCode did not expose the required review agents. Missing "${preferredReviewAgent}" and fallback "${fallbackReviewAgent}". Available agents: ${listedAgents}`,
+  )
+}
+
+async function promptReviewIssues(
+  client: OpencodeSessionClient,
+  sessionId: string,
+  prompt: string,
+  resolvedAgent: ResolvedReviewAgent,
+): Promise<unknown> {
+  try {
+    return await client.promptStructured(sessionId, {
+      agent: resolvedAgent.name,
+      system: resolvedAgent.system,
+      prompt,
+      schema: reviewIssuesEnvelopeJsonSchema,
+    })
+  } catch (error) {
+    if (!resolvedAgent.discoveryFailed || !isMissingAgentError(error)) {
+      throw error
+    }
+
+    return await client.promptStructured(sessionId, {
+      agent: fallbackReviewAgent,
+      system: reviewerSystemPrompt,
+      prompt,
+      schema: reviewIssuesEnvelopeJsonSchema,
+    })
+  }
+}
+
+export function isMissingAgentError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes("Agent not found")
 }
 
 export function buildReviewPrompt(input: RunReviewInput): string {

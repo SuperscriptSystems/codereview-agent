@@ -241,7 +241,9 @@ describe("review command", () => {
       trace: false,
     })).rejects.toThrow("Unauthorized")
 
-    expect(loggerFns.error).toHaveBeenCalled()
+    expect(loggerFns.error).toHaveBeenCalledWith(
+      "Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.",
+    )
     expect(sessionClient.close).toHaveBeenCalled()
   })
 

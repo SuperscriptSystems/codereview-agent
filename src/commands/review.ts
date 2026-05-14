@@ -111,7 +111,7 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     logger.error(`OpenCode review execution failed: ${message}`)
-    logger.error("Verify OpenCode provider auth and model configuration before running the full review flow.")
+    logger.error("Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.")
     throw error
   } finally {
     sessionClient.close()

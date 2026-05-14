@@ -55,6 +55,7 @@ describe("reviewer", () => {
 
   it("filters findings outside the changed file scope", async () => {
     const client = {
+      listAgents: async () => ["reviewer", "general"],
       createSession: async () => "session-1",
       promptText: async () => "",
       promptStructured: async () => ({
@@ -82,8 +83,67 @@ describe("reviewer", () => {
     })
   })
 
+  it("falls back to the built-in general agent when reviewer is unavailable", async () => {
+    const client = {
+      listAgents: async () => ["general", "plan"],
+      createSession: async () => "session-1",
+      promptText: async () => "",
+      promptStructured: async (_sessionId: string, options: { agent: string; system?: string }) => {
+        expect(options.agent).toBe("general")
+        expect(options.system).toContain("You are a ready-to-use code reviewer.")
+        return { issues: [] }
+      },
+      close: () => {},
+    }
+
+    await expect(runReview(client, input)).resolves.toEqual({
+      "src/app.ts": { issues: [] },
+    })
+  })
+
+  it("fails with a clear error when neither reviewer nor general is available", async () => {
+    const client = {
+      listAgents: async () => ["build", "plan"],
+      createSession: async () => "session-1",
+      promptText: async () => "",
+      promptStructured: async () => ({ issues: [] }),
+      close: () => {},
+    }
+
+    await expect(runReview(client, input)).rejects.toThrow(
+      'OpenCode did not expose the required review agents. Missing "reviewer" and fallback "general". Available agents: build, plan',
+    )
+  })
+
+  it("falls back to general when agent discovery fails and reviewer is missing at prompt time", async () => {
+    const promptStructured = async (_sessionId: string, options: { agent: string; system?: string }) => {
+      if (options.agent === "reviewer") {
+        throw new Error('OpenCode failed to run a structured prompt: {"name":"UnknownError","data":{"message":"Agent not found: \"reviewer\". Available agents: build, general, plan"}} (500 Internal Server Error)')
+      }
+
+      expect(options.agent).toBe("general")
+      expect(options.system).toContain("You are a ready-to-use code reviewer.")
+      return { issues: [] }
+    }
+
+    const client = {
+      listAgents: async () => {
+        throw new Error("agents endpoint unavailable")
+      },
+      createSession: async () => "session-1",
+      promptText: async () => "",
+      promptStructured,
+      close: () => {},
+    }
+
+    await expect(runReview(client, input)).resolves.toEqual({
+      "src/app.ts": { issues: [] },
+    })
+  })
+
   it("fails when reviewer output cannot be parsed into structured issues", async () => {
     const client = {
+      listAgents: async () => ["reviewer", "general"],
       createSession: async () => "session-1",
       promptText: async () => "",
       promptStructured: async () => ({
