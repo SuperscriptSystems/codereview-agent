@@ -22,6 +22,10 @@ export async function handlePrResults(allIssues: CodeIssue[], filesWithIssues: R
       method: "POST",
       body: JSON.stringify({ body: "Excellent work! The AI agent didn't find any issues." }),
     })
+    await api(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
+      method: "POST",
+      body: JSON.stringify({ event: "APPROVE" }),
+    })
     return
   }
 

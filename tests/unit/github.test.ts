@@ -54,6 +54,7 @@ describe("github integration", () => {
 
     expect(calls.some((call) => call.url.endsWith("/issues/12/comments") && call.method === "POST")).toBe(true)
     expect(calls.some((call) => call.body?.includes("didn't find any issues"))).toBe(true)
+    expect(calls.some((call) => call.url.endsWith("/pulls/12/reviews") && call.body?.includes("APPROVE"))).toBe(true)
   })
 
   it("posts summary, inline comments, and requests changes when issues exist", async () => {

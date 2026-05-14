@@ -14,6 +14,10 @@ function makeResponse(status: number, jsonData?: unknown, text?: string): Respon
 
 describe("bitbucket integration", () => {
   const originalFetch = global.fetch
+  const originalConsoleLog = console.log
+  const originalConsoleWarn = console.warn
+  let consoleLogSpy: ReturnType<typeof vi.fn>
+  let consoleWarnSpy: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     process.env.BITBUCKET_APP_USERNAME = "user"
@@ -21,10 +25,16 @@ describe("bitbucket integration", () => {
     process.env.BITBUCKET_WORKSPACE = "workspace"
     process.env.BITBUCKET_REPO_SLUG = "repo"
     process.env.BITBUCKET_PR_ID = "7"
+    consoleLogSpy = vi.fn()
+    consoleWarnSpy = vi.fn()
+    console.log = consoleLogSpy
+    console.warn = consoleWarnSpy
   })
 
   afterEach(() => {
     global.fetch = originalFetch
+    console.log = originalConsoleLog
+    console.warn = originalConsoleWarn
     vi.restoreAllMocks()
   })
 
@@ -142,6 +152,7 @@ describe("bitbucket integration", () => {
     }) as typeof fetch
 
     await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined()
+    expect(consoleWarnSpy).toHaveBeenCalledWith("[warn] Bitbucket could not approve for this pull request: Approval not allowed")
   })
 
   it("does not fail when approval endpoints return plain-text error bodies", async () => {
@@ -173,6 +184,31 @@ describe("bitbucket integration", () => {
 
     await expect(cleanupAndPostAllComments([issue], { "src/main.ts": [issue] })).resolves.toBeUndefined()
     await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined()
+  })
+
+  it("logs approval success when no issues are found and approval succeeds", async () => {
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? "GET"
+
+      if (url.endsWith("/user")) {
+        return makeResponse(200, { account_id: "acct-1" })
+      }
+
+      if (url.includes("/comments") && method === "GET") {
+        return makeResponse(200, { values: [] })
+      }
+
+      if (url.endsWith("/approve") && method === "POST") {
+        return makeResponse(200, { approved: true })
+      }
+
+      return makeResponse(201, { id: 1 })
+    }) as typeof fetch
+
+    await cleanupAndPostAllComments([], {})
+
+    expect(consoleLogSpy).toHaveBeenCalledWith("Bitbucket pull request approved.")
   })
 
   it("cleans up bot comments across paginated comment results", async () => {

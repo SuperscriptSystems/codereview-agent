@@ -16,7 +16,7 @@ export async function cleanupAndPostAllComments(
   }
 
   const auth = Buffer.from(`${username}:${password}`).toString("base64")
-  const api = async (path: string, init?: RequestInit, allowedStatuses: number[] = []): Promise<unknown> => {
+  const api = async (path: string, init?: RequestInit, allowedStatuses: number[] = []): Promise<BitbucketApiResult> => {
     const url = path.startsWith("http://") || path.startsWith("https://") ? path : `https://api.bitbucket.org/2.0${path}`
     const response = await fetch(url, {
       ...init,
@@ -32,25 +32,22 @@ export async function cleanupAndPostAllComments(
       throw new Error(`Bitbucket API ${path} failed: ${response.status} ${body}`)
     }
 
-    if (response.status === 204) {
-      return null
-    }
-
     const text = await response.text()
+    let data: unknown = null
 
-    if (!text) {
-      return null
+    if (text) {
+      try {
+        data = JSON.parse(text) as unknown
+      } catch {
+        data = text
+      }
     }
 
-    try {
-      return JSON.parse(text) as unknown
-    } catch {
-      return text
-    }
+    return { status: response.status, data }
   }
 
   const basePath = `/repositories/${workspace}/${repoSlug}/pullrequests/${prId}`
-  const me = (await api(`/user`)) as { account_id?: string } | null
+  const me = (await api(`/user`)).data as { account_id?: string } | null
   const accountId = me?.account_id
   await cleanupBotComments(api, `${basePath}/comments`, accountId)
 
@@ -59,11 +56,11 @@ export async function cleanupAndPostAllComments(
       method: "POST",
       body: JSON.stringify({ content: { raw: "Excellent work! The AI agent didn't find any issues. Keep up the great contributions!" } }),
     })
-    await api(`${basePath}/approve`, { method: "POST" }, [400])
+    await syncApprovalState(api, `${basePath}/approve`, "POST")
     return
   }
 
-  await api(`${basePath}/approve`, { method: "DELETE" }, [400])
+  await syncApprovalState(api, `${basePath}/approve`, "DELETE")
 
   for (const [filePath, issues] of Object.entries(filesWithIssues)) {
     for (const issue of issues) {
@@ -84,7 +81,7 @@ export async function cleanupAndPostAllComments(
 }
 
 async function cleanupBotComments(
-  api: (path: string, init?: RequestInit) => Promise<unknown>,
+  api: (path: string, init?: RequestInit, allowedStatuses?: number[]) => Promise<BitbucketApiResult>,
   commentsPath: string,
   accountId: string | undefined,
 ): Promise<void> {
@@ -94,7 +91,7 @@ async function cleanupBotComments(
   let nextPath: string | null = commentsPath
 
   while (nextPath) {
-    const data = (await api(nextPath)) as {
+    const data = (await api(nextPath)).data as {
       values?: Array<{ id: number; user?: { account_id?: string }; parent?: { id?: number } }>
       next?: string
     } | null
@@ -109,6 +106,29 @@ async function cleanupBotComments(
       await api(`${commentsPath}/${comment.id}`, { method: "DELETE" })
     }
   }
+}
+
+async function syncApprovalState(
+  api: (path: string, init?: RequestInit, allowedStatuses?: number[]) => Promise<BitbucketApiResult>,
+  approvalPath: string,
+  method: "POST" | "DELETE",
+): Promise<void> {
+  const action = method === "POST" ? "approve" : "remove approval"
+  const result = await api(approvalPath, { method }, [400])
+
+  if (result.status === 400) {
+    const details = typeof result.data === "string" ? result.data : JSON.stringify(result.data)
+    logger.warn(`Bitbucket could not ${action} for this pull request: ${details ?? "unknown reason"}`)
+    logger.warn("This usually means the bot account cannot approve its own pull request or lacks approval permission.")
+    return
+  }
+
+  logger.info(`Bitbucket pull request ${action}d.`)
+}
+
+interface BitbucketApiResult {
+  status: number
+  data: unknown
 }
 
 function buildBitbucketIssueComment(issue: CodeIssue): string {
