@@ -10,7 +10,6 @@ const shouldIgnorePathMock = vi.fn()
 const parseChangedFilesFromDiffMock = vi.fn()
 const createSessionClientMock = vi.fn()
 const runReviewMock = vi.fn()
-const loadProjectSkillPathsMock = vi.fn()
 const handlePrResultsMock = vi.fn()
 const cleanupAndPostAllCommentsMock = vi.fn()
 
@@ -40,10 +39,6 @@ vi.mock("../../src/opencode/client.js", () => ({
 
 vi.mock("../../src/review/reviewer.js", () => ({
   runReview: runReviewMock,
-}))
-
-vi.mock("../../src/review/skills.js", () => ({
-  loadProjectSkillPaths: loadProjectSkillPathsMock,
 }))
 
 vi.mock("../../src/integrations/github.js", () => ({
@@ -92,7 +87,6 @@ describe("review command", () => {
     shouldIgnorePathMock.mockReturnValue(false)
     createSessionClientMock.mockResolvedValue(sessionClient)
     runReviewMock.mockResolvedValue({})
-    loadProjectSkillPathsMock.mockResolvedValue([])
 
     delete process.env.GITHUB_ACTIONS
     delete process.env.GITHUB_PR_NUMBER
@@ -128,7 +122,6 @@ describe("review command", () => {
       baseRef: "origin/main",
       headRef: "HEAD",
       changedFilesMap: { "src/app.ts": "diff-app" },
-      projectSkillPaths: [],
       commitMessages: "Reviewing staged files before commit.",
       jiraDetails: "",
       reviewRules: ["Project rule"],
@@ -160,34 +153,6 @@ describe("review command", () => {
       changedFilesMap: { "src/range.ts": "range-diff" },
       commitMessages: "commit one\n\ncommit two",
       focusAreas: ["Security"],
-      projectSkillPaths: [],
-    }))
-  })
-
-  it("passes discovered project skill paths into runReview", async () => {
-    getDiffMock.mockResolvedValue("full diff text")
-    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
-    getCommitMessagesMock.mockResolvedValue("commit one")
-    loadProjectSkillPathsMock.mockResolvedValue([
-      ".agents/skills/frontend-design/skills.md",
-      ".agents/skills/react/forms.md",
-    ])
-    runReviewMock.mockResolvedValue({ "src/range.ts": { issues: [] } })
-
-    await runReviewCommand({
-      repoPath: "/repo",
-      baseRef: "main",
-      headRef: "feature",
-      staged: false,
-      focus: undefined,
-      trace: false,
-    })
-
-    expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({
-      projectSkillPaths: [
-        ".agents/skills/frontend-design/skills.md",
-        ".agents/skills/react/forms.md",
-      ],
     }))
   })
 

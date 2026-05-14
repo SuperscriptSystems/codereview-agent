@@ -17,7 +17,6 @@ export const reviewerSystemPrompt = [
   "- Use `git diff`, `git log`, `git show`, and `git status` only for inspection.",
   "- Focus on bugs, regressions, security problems, performance risks, and missing test coverage for new logic.",
   "- Comment only when there is enough evidence in the diff and inspected repository context.",
-  "- If project skill files are listed in the prompt, inspect only relevant ones when project-specific guidance is needed.",
   "- Do not report compiler, linter, formatting, or speculative issues.",
   "- Prefer fewer, stronger findings over many weak comments.",
   "- Scope each finding to a changed file and use the new line number.",
@@ -34,7 +33,6 @@ export interface RunReviewInput {
   baseRef: string
   headRef: string
   changedFilesMap: ChangedFileMap
-  projectSkillPaths: string[]
   commitMessages: string
   jiraDetails: string
   reviewRules: string[]
@@ -145,14 +143,6 @@ export function isMissingAgentError(error: unknown): boolean {
 
 export function buildReviewPrompt(input: RunReviewInput): string {
   const customRules = input.reviewRules.length > 0 ? `Custom rules:\n- ${input.reviewRules.join("\n- ")}` : "Custom rules:\n- None"
-  const projectSkills = input.projectSkillPaths.length > 0
-    ? [
-        "Project skills are available in this repository.",
-        "Available skill files:",
-        ...input.projectSkillPaths.map((filePath) => `- ${filePath}`),
-        "Inspect these files only when they are relevant to the changed code or needed to confirm project-specific rules.",
-      ].join("\n")
-    : ""
   const fullDiff = Object.entries(input.changedFilesMap)
     .map(([filePath, diff]) => `--- ${filePath} ---\n${diff}`)
     .join("\n")
@@ -174,7 +164,6 @@ export function buildReviewPrompt(input: RunReviewInput): string {
     `Allowed issue types: ${input.focusAreas.join(", ")}`,
     "Changed files:",
     changedFiles,
-    projectSkills,
     "Commit messages:",
     commitMessages,
     jiraContext,

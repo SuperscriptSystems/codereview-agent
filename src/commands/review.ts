@@ -10,7 +10,6 @@ import { cleanupAndPostAllComments } from "../integrations/bitbucket.js"
 import { handlePrResults } from "../integrations/github.js"
 import { createSessionClient } from "../opencode/client.js"
 import { runReview } from "../review/reviewer.js"
-import { loadProjectSkillPaths } from "../review/skills.js"
 
 export interface ReviewCommandOptions {
   repoPath: string
@@ -55,14 +54,6 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
   logger.info(`Focus: ${focusAreas.join(", ")}`)
   logger.info(`Custom rules: ${config.review.customRules.length}`)
 
-  const projectSkillPaths = await loadProjectSkillPaths(repoPath)
-  if (projectSkillPaths.length === 0) {
-    logger.info("No project skill files found.")
-  } else {
-    logger.info(`Project skill files found: ${projectSkillPaths.length}`)
-    logger.debug(`Project skill files:\n- ${projectSkillPaths.join("\n- ")}`)
-  }
-
   const sessionClient = await createSessionClient(rawConfig, repoPath)
 
   try {
@@ -72,7 +63,6 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
       baseRef: options.baseRef,
       headRef: options.headRef,
       changedFilesMap: filteredChangedFilesMap,
-      projectSkillPaths,
       commitMessages,
       jiraDetails: "",
       reviewRules: config.review.customRules,

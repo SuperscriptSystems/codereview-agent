@@ -43,4 +43,29 @@ describe("opencode client structured output extraction", () => {
       },
     })
   })
+
+  it("extracts structured payload from text parts when info.structured_output is missing", () => {
+    expect(__test__.extractStructuredPayloadFromText<{ issues: unknown[] }>({
+      data: {
+        parts: [
+          {
+            type: "text",
+            text: '```json\n{"issues":[]}\n```',
+          },
+        ],
+      },
+    })).toEqual({ issues: [] })
+  })
+
+  it("extracts text from wrapped response parts", () => {
+    expect(__test__.extractPromptText({
+      data: {
+        parts: [
+          { type: "text", text: "first" },
+          { type: "tool", text: "ignored" },
+          { type: "text", text: "second" },
+        ],
+      },
+    })).toBe("first\nsecond")
+  })
 })

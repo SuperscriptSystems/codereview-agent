@@ -95,11 +95,18 @@ export async function createSessionClient(config: Record<string, unknown>, direc
         throw new Error(info.error.message ?? "OpenCode structured output validation failed.")
       }
 
+      const textFallback = extractStructuredPayloadFromText<T>(response)
+      if (textFallback !== null) {
+        return textFallback
+      }
+
       if (info?.structured_output === undefined) {
+        const promptText = extractPromptText(response)
+        const details = promptText ? ` Raw response text: ${truncateText(promptText, 400)}` : ""
         throw new Error(buildOpencodeErrorMessage(
           "run a structured prompt",
           response,
-          "OpenCode did not return a structured output payload.",
+          `OpenCode did not return a structured output payload.${details}`,
         ))
       }
 
@@ -331,6 +338,93 @@ function getStructuredOutputInfo(response: unknown): { structured_output?: unkno
   }
 }
 
+function extractStructuredPayloadFromText<T>(response: unknown): T | null {
+  const text = extractPromptText(response)
+  if (!text) {
+    return null
+  }
+
+  const candidatePayloads = [
+    extractTaggedPayload(text),
+    extractFencedJson(text),
+    extractJsonObject(text),
+    extractJsonArray(text),
+  ].filter((value): value is string => Boolean(value))
+
+  for (const candidate of candidatePayloads) {
+    try {
+      return JSON.parse(candidate) as T
+    } catch {
+      continue
+    }
+  }
+
+  return null
+}
+
+function extractPromptText(response: unknown): string {
+  if (!response || typeof response !== "object") {
+    return ""
+  }
+
+  const data = getResponseData<{ parts?: Array<{ type: string; text?: string }> }>(response)
+  if (!data?.parts) {
+    return ""
+  }
+
+  return extractTextFromParts(data.parts)
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+function extractTaggedPayload(text: string): string | null {
+  const start = text.indexOf("BEGIN_JSON")
+  const end = text.lastIndexOf("END_JSON")
+
+  if (start === -1 || end === -1 || end <= start) {
+    return null
+  }
+
+  return text.slice(start + "BEGIN_JSON".length, end).trim()
+}
+
+function extractFencedJson(text: string): string | null {
+  const fencedJsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/i)
+  if (fencedJsonMatch?.[1]) {
+    return fencedJsonMatch[1].trim()
+  }
+
+  const fencedMatch = text.match(/```\s*([\s\S]*?)\s*```/i)
+  return fencedMatch?.[1]?.trim() ?? null
+}
+
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start === -1 || end === -1 || end < start) {
+    return null
+  }
+
+  return text.slice(start, end + 1)
+}
+
+function extractJsonArray(text: string): string | null {
+  const start = text.indexOf("[")
+  const end = text.lastIndexOf("]")
+  if (start === -1 || end === -1 || end < start) {
+    return null
+  }
+
+  return text.slice(start, end + 1)
+}
+
 function extractTextFromParts(parts: Array<{ type: string; text?: string }>): string {
   return parts
     .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -343,4 +437,6 @@ export type { OpencodeClient }
 
 export const __test__ = {
   getStructuredOutputInfo,
+  extractStructuredPayloadFromText,
+  extractPromptText,
 }

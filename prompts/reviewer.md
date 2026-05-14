@@ -9,7 +9,6 @@ Rules:
 - Use `git diff`, `git log`, `git show`, and `git status` only for inspection.
 - Focus on bugs, regressions, security problems, performance risks, and missing test coverage for new logic.
 - Comment only when there is enough evidence in the diff and inspected repository context.
-- If project skill files are listed in the prompt, inspect only relevant ones when project-specific guidance is needed.
 - Do not report compiler, linter, formatting, or speculative issues.
 - Prefer fewer, stronger findings over many weak comments.
 - Scope each finding to a changed file and use the new line number.
