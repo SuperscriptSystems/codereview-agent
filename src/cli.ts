@@ -45,17 +45,30 @@ program
     await runAssessCommand(options)
   })
 
-if (process.argv.length <= 2) {
-  runReviewCommand({
-    repoPath: ".",
-    baseRef: "HEAD~1",
-    headRef: "HEAD",
-    staged: false,
-    focus: [],
-    trace: false,
-  }).catch(handleFatalError)
-} else {
-  program.parseAsync(process.argv).catch(handleFatalError)
+void main()
+
+async function main(): Promise<void> {
+  try {
+    if (process.argv.length <= 2) {
+      await runReviewCommand({
+        repoPath: ".",
+        baseRef: "HEAD~1",
+        headRef: "HEAD",
+        staged: false,
+        focus: [],
+        trace: false,
+      })
+    } else {
+      await program.parseAsync(process.argv)
+    }
+  } catch (error) {
+    handleFatalError(error)
+  }
+
+  // This CLI runs one-shot commands in CI. Some underlying HTTP clients can keep
+  // sockets alive after work completes, so exit explicitly once logs are flushed.
+  await flushOutputStreams()
+  process.exit(process.exitCode ?? 0)
 }
 
 function collectValues(value: string, previous: string[]): string[] {
@@ -66,4 +79,14 @@ function handleFatalError(error: unknown): void {
   const message = error instanceof Error ? error.stack ?? error.message : String(error)
   console.error(message)
   process.exitCode = 1
+}
+
+async function flushOutputStreams(): Promise<void> {
+  await Promise.all([flushStream(process.stdout), flushStream(process.stderr)])
+}
+
+function flushStream(stream: NodeJS.WriteStream): Promise<void> {
+  return new Promise((resolve) => {
+    stream.write("", () => resolve())
+  })
 }
