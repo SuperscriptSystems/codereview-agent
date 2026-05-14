@@ -8,6 +8,7 @@ export interface RunReviewInput {
   baseRef: string
   headRef: string
   changedFilesMap: ChangedFileMap
+  projectSkillPaths: string[]
   commitMessages: string
   jiraDetails: string
   reviewRules: string[]
@@ -42,6 +43,14 @@ export async function runReview(client: OpencodeSessionClient, input: RunReviewI
 
 export function buildReviewPrompt(input: RunReviewInput): string {
   const customRules = input.reviewRules.length > 0 ? `Custom rules:\n- ${input.reviewRules.join("\n- ")}` : "Custom rules:\n- None"
+  const projectSkills = input.projectSkillPaths.length > 0
+    ? [
+        "Project skills are available in this repository.",
+        "Available skill files:",
+        ...input.projectSkillPaths.map((filePath) => `- ${filePath}`),
+        "Inspect these files only when they are relevant to the changed code or needed to confirm project-specific rules.",
+      ].join("\n")
+    : ""
   const fullDiff = Object.entries(input.changedFilesMap)
     .map(([filePath, diff]) => `--- ${filePath} ---\n${diff}`)
     .join("\n")
@@ -63,6 +72,7 @@ export function buildReviewPrompt(input: RunReviewInput): string {
     `Allowed issue types: ${input.focusAreas.join(", ")}`,
     "Changed files:",
     changedFiles,
+    projectSkills,
     "Commit messages:",
     commitMessages,
     jiraContext,

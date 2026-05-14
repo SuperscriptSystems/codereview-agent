@@ -11,6 +11,7 @@ describe("reviewer", () => {
     changedFilesMap: {
       "src/app.ts": "@@ -1,1 +1,1 @@\n-console.log('old')\n+console.log('new')",
     },
+    projectSkillPaths: [],
     commitMessages: "ABC-123 update app flow",
     jiraDetails: "Jira context:\nTask: ABC-123",
     reviewRules: ["Prefer guarding null inputs."],
@@ -32,7 +33,24 @@ describe("reviewer", () => {
     expect(prompt).toContain("Custom rules:\n- Prefer guarding null inputs.")
     expect(prompt).toContain("Git Diff:")
     expect(prompt).toContain("--- src/app.ts ---")
+    expect(prompt).not.toContain("Project skills are available in this repository.")
     expect(prompt).not.toContain("Annotated Files:")
+  })
+
+  it("adds a project skills section only when skill paths are provided", () => {
+    const prompt = buildReviewPrompt({
+      ...input,
+      projectSkillPaths: [
+        ".agents/skills/frontend-design/skills.md",
+        ".agents/skills/react/forms.md",
+      ],
+    })
+
+    expect(prompt).toContain("Project skills are available in this repository.")
+    expect(prompt).toContain("Available skill files:")
+    expect(prompt).toContain("- .agents/skills/frontend-design/skills.md")
+    expect(prompt).toContain("- .agents/skills/react/forms.md")
+    expect(prompt).toContain("Inspect these files only when they are relevant to the changed code or needed to confirm project-specific rules.")
   })
 
   it("filters findings outside the changed file scope", async () => {
