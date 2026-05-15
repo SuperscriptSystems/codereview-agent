@@ -150,7 +150,7 @@ async function promptReviewIssues(
       system: resolvedAgent.system,
       prompt,
       schema: reviewIssuesEnvelopeJsonSchema,
-      retryCount: 5,
+      retryCount: 100,
     })
   } catch (error) {
     if (!resolvedAgent.discoveryFailed || !isMissingAgentError(error)) {
@@ -162,7 +162,7 @@ async function promptReviewIssues(
       system: reviewerSystemPrompt,
       prompt,
       schema: reviewIssuesEnvelopeJsonSchema,
-      retryCount: 5,
+      retryCount: 100,
     })
   }
 }
