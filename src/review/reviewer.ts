@@ -49,9 +49,7 @@ export interface ResolvedReviewAgent {
 
 export async function runReview(client: OpencodeSessionClient, input: RunReviewInput): Promise<Record<string, ReviewResult>> {
   const resolvedAgent = await resolveReviewAgent(client)
-  const sessionId = await client.createSession("reviewer")
-  const prompt = buildReviewPrompt(input)
-  const envelope = reviewIssuesEnvelopeSchema.parse(await promptReviewIssues(client, sessionId, prompt, resolvedAgent))
+  const envelope = reviewIssuesEnvelopeSchema.parse(await collectReviewIssues(client, input, resolvedAgent))
 
   const issuesByFile = new Map<string, ReviewResult["issues"]>()
 
@@ -68,6 +66,37 @@ export async function runReview(client: OpencodeSessionClient, input: RunReviewI
   return Object.fromEntries(
     Object.keys(input.changedFilesMap).map((filePath) => [filePath, { issues: issuesByFile.get(filePath) ?? [] }]),
   )
+}
+
+async function collectReviewIssues(
+  client: OpencodeSessionClient,
+  input: RunReviewInput,
+  resolvedAgent: ResolvedReviewAgent,
+): Promise<unknown> {
+  const sessionId = await client.createSession("reviewer")
+
+  try {
+    const prompt = buildReviewPrompt(input)
+    return await promptReviewIssues(client, sessionId, prompt, resolvedAgent)
+  } catch (error) {
+    if (!shouldRetryReviewInSmallerBatches(error) || Object.keys(input.changedFilesMap).length < 2) {
+      throw error
+    }
+  }
+
+  const [leftChangedFilesMap, rightChangedFilesMap] = splitChangedFilesMap(input.changedFilesMap)
+  const leftEnvelope = reviewIssuesEnvelopeSchema.parse(await collectReviewIssues(client, {
+    ...input,
+    changedFilesMap: leftChangedFilesMap,
+  }, resolvedAgent))
+  const rightEnvelope = reviewIssuesEnvelopeSchema.parse(await collectReviewIssues(client, {
+    ...input,
+    changedFilesMap: rightChangedFilesMap,
+  }, resolvedAgent))
+
+  return {
+    issues: [...leftEnvelope.issues, ...rightEnvelope.issues],
+  }
 }
 
 export async function resolveReviewAgent(client: OpencodeSessionClient): Promise<ResolvedReviewAgent> {
@@ -121,6 +150,7 @@ async function promptReviewIssues(
       system: resolvedAgent.system,
       prompt,
       schema: reviewIssuesEnvelopeJsonSchema,
+      retryCount: 5,
     })
   } catch (error) {
     if (!resolvedAgent.discoveryFailed || !isMissingAgentError(error)) {
@@ -132,6 +162,7 @@ async function promptReviewIssues(
       system: reviewerSystemPrompt,
       prompt,
       schema: reviewIssuesEnvelopeJsonSchema,
+      retryCount: 5,
     })
   }
 }
@@ -139,6 +170,21 @@ async function promptReviewIssues(
 export function isMissingAgentError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes("Agent not found")
+}
+
+function shouldRetryReviewInSmallerBatches(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes("structured output")
+}
+
+function splitChangedFilesMap(changedFilesMap: ChangedFileMap): [ChangedFileMap, ChangedFileMap] {
+  const entries = Object.entries(changedFilesMap)
+  const midpoint = Math.ceil(entries.length / 2)
+
+  return [
+    Object.fromEntries(entries.slice(0, midpoint)),
+    Object.fromEntries(entries.slice(midpoint)),
+  ]
 }
 
 export function buildReviewPrompt(input: RunReviewInput): string {

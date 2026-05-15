@@ -137,6 +137,52 @@ describe("reviewer", () => {
     await expect(runReview(client, input)).rejects.toThrow()
   })
 
+  it("retries in smaller batches when a larger structured review response fails", async () => {
+    const promptStructuredCalls: string[] = []
+    const batchedInput: RunReviewInput = {
+      ...input,
+      changedFilesMap: {
+        "src/app.ts": "@@ -1,1 +1,1 @@\n-console.log('old')\n+console.log('new')",
+        "src/auth.ts": "@@ -1,1 +1,1 @@\n-export const oldAuth = true\n+export const newAuth = true",
+      },
+    }
+
+    const client = {
+      listAgents: async () => ["reviewer", "general"],
+      createSession: async () => "session-1",
+      promptText: async () => "",
+      promptStructured: async (_sessionId: string, options: { prompt: string }) => {
+        promptStructuredCalls.push(options.prompt)
+
+        if (options.prompt.includes("- src/app.ts") && options.prompt.includes("- src/auth.ts")) {
+          throw new Error("OpenCode did not return a structured output payload.")
+        }
+
+        if (options.prompt.includes("- src/app.ts")) {
+          return {
+            issues: [{ filePath: "src/app.ts", lineNumber: 10, issueType: "LogicError", comment: "App issue" }],
+          }
+        }
+
+        return {
+          issues: [{ filePath: "src/auth.ts", lineNumber: 4, issueType: "Security", comment: "Auth issue" }],
+        }
+      },
+      close: () => {},
+    }
+
+    await expect(runReview(client, batchedInput)).resolves.toEqual({
+      "src/app.ts": {
+        issues: [{ filePath: "src/app.ts", lineNumber: 10, issueType: "LogicError", comment: "App issue" }],
+      },
+      "src/auth.ts": {
+        issues: [{ filePath: "src/auth.ts", lineNumber: 4, issueType: "Security", comment: "Auth issue" }],
+      },
+    })
+
+    expect(promptStructuredCalls).toHaveLength(3)
+  })
+
   it("no longer depends on annotated file assembly", async () => {
     const reviewerSource = await import("node:fs/promises").then(({ readFile }) =>
       readFile(new URL("../../src/review/reviewer.ts", import.meta.url), "utf8"),
