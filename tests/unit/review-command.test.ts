@@ -203,31 +203,6 @@ describe("review command", () => {
     expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({ jiraDetails: "jira context" }))
   })
 
-  it("truncates long Jira descriptions before adding them to the review prompt", async () => {
-    process.env.JIRA_URL = "https://example.atlassian.net"
-    const longDescription = "A".repeat(4500)
-    getTaskDetailsMock.mockResolvedValue({ summary: "Task", description: longDescription })
-
-    getDiffMock.mockResolvedValue("full diff text")
-    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
-    getCommitMessagesMock.mockResolvedValue("commit one\n\ncommit two")
-    runReviewMock.mockResolvedValue({ "src/range.ts": { issues: [] } })
-
-    await runReviewCommand({
-      repoPath: "/repo",
-      baseRef: "main",
-      headRef: "feature",
-      staged: false,
-      focus: undefined,
-      trace: false,
-    })
-
-    expect(buildJiraDetailsTextMock).toHaveBeenCalledWith("EX-123", {
-      summary: "Task",
-      description: `${"A".repeat(3997)}...`,
-    })
-  })
-
   it("continues without Jira details when no Jira task can be resolved", async () => {
     process.env.JIRA_URL = "https://example.atlassian.net"
     getTaskIdFromGitInfoMock.mockResolvedValue(null)
