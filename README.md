@@ -49,6 +49,8 @@ Run Jira assessment:
 npm run assess -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 ```
 
+When Jira is configured, `review` also pulls Jira task summary and description into the reviewer prompt. The task ID comes from `JIRA_TASK_ID` or detected git metadata such as branch name and commit messages.
+
 ## Configuration
 
 OpenCode runtime settings live in `opencode.json`.
