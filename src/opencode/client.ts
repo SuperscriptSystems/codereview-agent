@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk"
 
 export interface OpencodeSessionClient {
   createSession(title: string): Promise<string>
@@ -27,7 +27,9 @@ export async function createSessionClient(config: Record<string, unknown>, direc
 
   return {
     async createSession(title: string): Promise<string> {
-      const response = await client.session.create({ title })
+      const response = await client.session.create({
+        body: { title },
+      })
       const data = getResponseData<{ id?: string }>(response)
 
       if (!data?.id) {
@@ -54,10 +56,12 @@ export async function createSessionClient(config: Record<string, unknown>, direc
     },
     async promptText(sessionId: string, options: { agent: string; system?: string; prompt: string }): Promise<string> {
       const response = await client.session.prompt({
-        sessionID: sessionId,
-        agent: options.agent,
-        system: options.system,
-        parts: [{ type: "text", text: options.prompt }],
+        path: { id: sessionId },
+        body: {
+          agent: options.agent,
+          system: options.system,
+          parts: [{ type: "text", text: options.prompt }],
+        },
       })
       const data = getResponseData<{ parts?: Array<{ type: string; text?: string }> }>(response)
 
@@ -71,17 +75,20 @@ export async function createSessionClient(config: Record<string, unknown>, direc
       sessionId: string,
       options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown>; retryCount?: number },
     ): Promise<T> {
+      // The OpenCode server accepts `format` for structured output, but the SDK type here lags behind the API.
       const response = await client.session.prompt({
-        sessionID: sessionId,
-        agent: options.agent,
-        system: options.system,
-        parts: [{ type: "text", text: options.prompt }],
-        format: {
-          type: "json_schema",
-          retryCount: options.retryCount ?? 3,
-          schema: options.schema,
-        },
-      })
+        path: { id: sessionId },
+        body: {
+          agent: options.agent,
+          system: options.system,
+          parts: [{ type: "text", text: options.prompt }],
+          format: {
+            type: "json_schema",
+            retryCount: options.retryCount ?? 3,
+            schema: options.schema,
+          },
+        } as unknown as Parameters<typeof client.session.prompt>[0]["body"],
+      } as Parameters<typeof client.session.prompt>[0])
 
       const info = getStructuredOutputInfo(response)
       if (info?.error?.name === "StructuredOutputError") {

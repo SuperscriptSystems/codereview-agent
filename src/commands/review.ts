@@ -3,13 +3,11 @@ import path from "node:path"
 import { loadRawConfig, parseConfig } from "../config/load-config.js"
 import { configureLogger, logger } from "../core/logger.js"
 import type { IssueType } from "../core/models.js"
-import { getTaskIdFromGitInfo } from "../git/context.js"
 import { getCommitMessages, getDiff, getStagedDiffContent } from "../git/diff.js"
 import { filterTestFiles, shouldIgnorePath } from "../git/filtering.js"
 import { parseChangedFilesFromDiff } from "../git/parse.js"
 import { cleanupAndPostAllComments } from "../integrations/bitbucket.js"
 import { handlePrResults } from "../integrations/github.js"
-import { buildJiraDetailsText, getTaskDetails, projectKeys } from "../integrations/jira.js"
 import { createSessionClient } from "../opencode/client.js"
 import { runReview } from "../review/reviewer.js"
 
@@ -56,8 +54,6 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
   logger.info(`Focus: ${focusAreas.join(", ")}`)
   logger.info(`Custom rules: ${config.review.customRules.length}`)
 
-  const jiraDetails = await resolveJiraDetailsForReview(repoPath, commitMessages)
-
   const sessionClient = await createSessionClient(rawConfig, repoPath)
 
   try {
@@ -68,7 +64,7 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
       headRef: options.headRef,
       changedFilesMap: filteredChangedFilesMap,
       commitMessages,
-      jiraDetails,
+      jiraDetails: "",
       reviewRules: config.review.customRules,
       focusAreas,
     })
@@ -162,39 +158,5 @@ async function collectReviewInputs(
   return {
     changedFilesMap: parseChangedFilesFromDiff(diff),
     commitMessages: await getCommitMessages(repoPath, options.baseRef, options.headRef),
-  }
-}
-
-async function resolveJiraDetailsForReview(repoPath: string, commitMessages: string): Promise<string> {
-  if (!process.env.JIRA_URL) {
-    return ""
-  }
-
-  const taskId = process.env.JIRA_TASK_ID ?? (await getTaskIdFromGitInfo(repoPath, commitMessages))
-  if (!taskId) {
-    return ""
-  }
-
-  try {
-    const knownPrefixes = await projectKeys()
-    if (knownPrefixes.size > 0) {
-      const prefix = taskId.split("-")[0]
-      if (!knownPrefixes.has(prefix)) {
-        logger.warn(`Extracted task '${taskId}' has unknown project prefix '${prefix}'. Skipping Jira review context.`)
-        return ""
-      }
-    }
-
-    const taskDetails = await getTaskDetails(taskId)
-    if (!taskDetails) {
-      logger.warn(`Could not fetch Jira details for ${taskId}. Continuing review without Jira context.`)
-      return ""
-    }
-
-    logger.info(`Using Jira context from ${taskId} for review prompt.`)
-    return buildJiraDetailsText(taskId, taskDetails)
-  } catch (error) {
-    logger.warn(`Failed to resolve Jira review context: ${error instanceof Error ? error.message : String(error)}`)
-    return ""
   }
 }

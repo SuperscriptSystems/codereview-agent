@@ -5,7 +5,6 @@ const parseConfigMock = vi.fn()
 const getDiffMock = vi.fn()
 const getCommitMessagesMock = vi.fn()
 const getStagedDiffContentMock = vi.fn()
-const getTaskIdFromGitInfoMock = vi.fn()
 const filterTestFilesMock = vi.fn()
 const shouldIgnorePathMock = vi.fn()
 const parseChangedFilesFromDiffMock = vi.fn()
@@ -13,9 +12,6 @@ const createSessionClientMock = vi.fn()
 const runReviewMock = vi.fn()
 const handlePrResultsMock = vi.fn()
 const cleanupAndPostAllCommentsMock = vi.fn()
-const projectKeysMock = vi.fn()
-const getTaskDetailsMock = vi.fn()
-const buildJiraDetailsTextMock = vi.fn()
 
 vi.mock("../../src/config/load-config.js", () => ({
   loadRawConfig: loadRawConfigMock,
@@ -26,10 +22,6 @@ vi.mock("../../src/git/diff.js", () => ({
   getDiff: getDiffMock,
   getCommitMessages: getCommitMessagesMock,
   getStagedDiffContent: getStagedDiffContentMock,
-}))
-
-vi.mock("../../src/git/context.js", () => ({
-  getTaskIdFromGitInfo: getTaskIdFromGitInfoMock,
 }))
 
 vi.mock("../../src/git/filtering.js", () => ({
@@ -51,12 +43,6 @@ vi.mock("../../src/review/reviewer.js", () => ({
 
 vi.mock("../../src/integrations/github.js", () => ({
   handlePrResults: handlePrResultsMock,
-}))
-
-vi.mock("../../src/integrations/jira.js", () => ({
-  projectKeys: projectKeysMock,
-  getTaskDetails: getTaskDetailsMock,
-  buildJiraDetailsText: buildJiraDetailsTextMock,
 }))
 
 vi.mock("../../src/integrations/bitbucket.js", () => ({
@@ -101,24 +87,16 @@ describe("review command", () => {
     shouldIgnorePathMock.mockReturnValue(false)
     createSessionClientMock.mockResolvedValue(sessionClient)
     runReviewMock.mockResolvedValue({})
-    getTaskIdFromGitInfoMock.mockResolvedValue("EX-123")
-    projectKeysMock.mockResolvedValue(new Set(["EX"]))
-    getTaskDetailsMock.mockResolvedValue({ summary: "Task", description: "Details" })
-    buildJiraDetailsTextMock.mockReturnValue("jira context")
 
     delete process.env.GITHUB_ACTIONS
     delete process.env.GITHUB_PR_NUMBER
     delete process.env.BITBUCKET_PR_ID
-    delete process.env.JIRA_URL
-    delete process.env.JIRA_TASK_ID
   })
 
   afterEach(() => {
     delete process.env.GITHUB_ACTIONS
     delete process.env.GITHUB_PR_NUMBER
     delete process.env.BITBUCKET_PR_ID
-    delete process.env.JIRA_URL
-    delete process.env.JIRA_TASK_ID
   })
 
   it("passes staged review inputs through the new runReview shape", async () => {
@@ -174,101 +152,8 @@ describe("review command", () => {
       headRef: "feature",
       changedFilesMap: { "src/range.ts": "range-diff" },
       commitMessages: "commit one\n\ncommit two",
-      jiraDetails: "",
       focusAreas: ["Security"],
     }))
-  })
-
-  it("adds Jira details to the review prompt inputs when Jira is configured", async () => {
-    process.env.JIRA_URL = "https://example.atlassian.net"
-
-    getDiffMock.mockResolvedValue("full diff text")
-    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
-    getCommitMessagesMock.mockResolvedValue("commit one\n\ncommit two")
-    runReviewMock.mockResolvedValue({ "src/range.ts": { issues: [] } })
-
-    await runReviewCommand({
-      repoPath: "/repo",
-      baseRef: "main",
-      headRef: "feature",
-      staged: false,
-      focus: undefined,
-      trace: false,
-    })
-
-    expect(getTaskIdFromGitInfoMock).toHaveBeenCalledWith("/repo", "commit one\n\ncommit two")
-    expect(projectKeysMock).toHaveBeenCalled()
-    expect(getTaskDetailsMock).toHaveBeenCalledWith("EX-123")
-    expect(buildJiraDetailsTextMock).toHaveBeenCalledWith("EX-123", { summary: "Task", description: "Details" })
-    expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({ jiraDetails: "jira context" }))
-  })
-
-  it("continues without Jira details when no Jira task can be resolved", async () => {
-    process.env.JIRA_URL = "https://example.atlassian.net"
-    getTaskIdFromGitInfoMock.mockResolvedValue(null)
-
-    getDiffMock.mockResolvedValue("full diff text")
-    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
-    getCommitMessagesMock.mockResolvedValue("commit one")
-    runReviewMock.mockResolvedValue({ "src/range.ts": { issues: [] } })
-
-    await runReviewCommand({
-      repoPath: "/repo",
-      baseRef: "main",
-      headRef: "feature",
-      staged: false,
-      focus: undefined,
-      trace: false,
-    })
-
-    expect(projectKeysMock).not.toHaveBeenCalled()
-    expect(getTaskDetailsMock).not.toHaveBeenCalled()
-    expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({ jiraDetails: "" }))
-  })
-
-  it("continues without Jira details when Jira lookup fails", async () => {
-    process.env.JIRA_URL = "https://example.atlassian.net"
-    getTaskDetailsMock.mockResolvedValue(null)
-
-    getDiffMock.mockResolvedValue("full diff text")
-    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
-    getCommitMessagesMock.mockResolvedValue("commit one")
-    runReviewMock.mockResolvedValue({ "src/range.ts": { issues: [] } })
-
-    await runReviewCommand({
-      repoPath: "/repo",
-      baseRef: "main",
-      headRef: "feature",
-      staged: false,
-      focus: undefined,
-      trace: false,
-    })
-
-    expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({ jiraDetails: "" }))
-    expect(loggerFns.warn).toHaveBeenCalledWith("Could not fetch Jira details for EX-123. Continuing review without Jira context.")
-  })
-
-  it("continues without Jira details when the Jira project prefix is unknown", async () => {
-    process.env.JIRA_URL = "https://example.atlassian.net"
-    projectKeysMock.mockResolvedValue(new Set(["ABC"]))
-
-    getDiffMock.mockResolvedValue("full diff text")
-    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
-    getCommitMessagesMock.mockResolvedValue("commit one")
-    runReviewMock.mockResolvedValue({ "src/range.ts": { issues: [] } })
-
-    await runReviewCommand({
-      repoPath: "/repo",
-      baseRef: "main",
-      headRef: "feature",
-      staged: false,
-      focus: undefined,
-      trace: false,
-    })
-
-    expect(getTaskDetailsMock).not.toHaveBeenCalled()
-    expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({ jiraDetails: "" }))
-    expect(loggerFns.warn).toHaveBeenCalledWith("Extracted task 'EX-123' has unknown project prefix 'EX'. Skipping Jira review context.")
   })
 
   it("returns early when no changed files exist", async () => {
