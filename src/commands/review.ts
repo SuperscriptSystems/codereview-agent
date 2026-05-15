@@ -63,7 +63,7 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
   const sessionClient = await createSessionClient(rawConfig, repoPath)
 
   try {
-    const reviewInput = {
+    const reviewResults = await runReview(sessionClient, {
       repoPath,
       staged: options.staged,
       baseRef: options.baseRef,
@@ -73,8 +73,7 @@ export async function runReviewCommand(options: ReviewCommandOptions): Promise<v
       jiraDetails,
       reviewRules: config.review.customRules,
       focusAreas,
-    }
-    const reviewResults = await runReviewWithJiraFallback(sessionClient, reviewInput)
+    })
 
     const issueCount = Object.values(reviewResults).reduce((count, result) => count + result.issues.length, 0)
     const filesWithIssues = Object.fromEntries(
@@ -212,32 +211,4 @@ function truncateText(value: string, maxLength: number): string {
   }
 
   return `${normalized.slice(0, maxLength - 3)}...`
-}
-
-async function runReviewWithJiraFallback(
-  sessionClient: Awaited<ReturnType<typeof createSessionClient>>,
-  reviewInput: Parameters<typeof runReview>[1],
-): Promise<Awaited<ReturnType<typeof runReview>>> {
-  try {
-    return await runReview(sessionClient, reviewInput)
-  } catch (error) {
-    if (!shouldRetryWithoutJira(error, reviewInput.jiraDetails)) {
-      throw error
-    }
-
-    logger.warn("Structured output failed with Jira context. Retrying review without Jira context.")
-    return await runReview(sessionClient, {
-      ...reviewInput,
-      jiraDetails: "",
-    })
-  }
-}
-
-function shouldRetryWithoutJira(error: unknown, jiraDetails: string): boolean {
-  if (!jiraDetails.trim()) {
-    return false
-  }
-
-  const message = error instanceof Error ? error.message : String(error)
-  return message.includes("OpenCode did not return a structured output payload")
 }
