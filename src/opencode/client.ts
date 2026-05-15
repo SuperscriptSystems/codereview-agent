@@ -94,6 +94,11 @@ export async function createSessionClient(config: Record<string, unknown>, direc
       }
 
       if (info?.structured_output === undefined) {
+        const secondaryTextFallback = await promptStructuredViaTextFallback<T>(client, sessionId, options)
+        if (secondaryTextFallback !== null) {
+          return secondaryTextFallback
+        }
+
         const promptText = extractPromptText(response)
         const details = promptText ? ` Raw response text: ${truncateText(promptText, 400)}` : ""
         throw new Error(buildOpencodeErrorMessage(
@@ -463,10 +468,39 @@ function extractTextFromParts(parts: Array<{ type: string; text?: string }>): st
     .trim()
 }
 
+async function promptStructuredViaTextFallback<T>(
+  client: OpencodeClient,
+  sessionId: string,
+  options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown> },
+): Promise<T | null> {
+  const response = await client.session.prompt({
+    sessionID: sessionId,
+    agent: options.agent,
+    system: options.system,
+    parts: [{ type: "text", text: buildTextStructuredFallbackPrompt(options.prompt, options.schema) }],
+  })
+
+  return extractStructuredPayloadFromText<T>(response)
+}
+
+function buildTextStructuredFallbackPrompt(prompt: string, schema: Record<string, unknown>): string {
+  return [
+    prompt,
+    "Return only valid JSON between BEGIN_JSON and END_JSON.",
+    "Do not include any prose before or after the JSON.",
+    "BEGIN_JSON",
+    '{"issues":[]}',
+    "END_JSON",
+    "JSON schema:",
+    JSON.stringify(schema, null, 2),
+  ].join("\n\n")
+}
+
 export type { OpencodeClient }
 
 export const __test__ = {
   getStructuredOutputInfo,
   extractStructuredPayloadFromText,
   extractPromptText,
+  buildTextStructuredFallbackPrompt,
 }
