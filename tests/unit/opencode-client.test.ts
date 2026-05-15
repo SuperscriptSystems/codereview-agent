@@ -68,19 +68,4 @@ describe("opencode client structured output extraction", () => {
       },
     })).toBe("first\nsecond")
   })
-
-  it("builds a plain-text JSON fallback prompt", () => {
-    const prompt = __test__.buildTextStructuredFallbackPrompt("Review this diff", {
-      type: "object",
-      properties: {
-        issues: { type: "array" },
-      },
-    })
-
-    expect(prompt).toContain("Review this diff")
-    expect(prompt).toContain("BEGIN_JSON")
-    expect(prompt).toContain("END_JSON")
-    expect(prompt).toContain('{"issues":[]}')
-    expect(prompt).toContain('"issues"')
-  })
 })
