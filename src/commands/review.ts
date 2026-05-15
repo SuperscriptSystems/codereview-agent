@@ -13,6 +13,8 @@ import { buildJiraDetailsText, getTaskDetails, projectKeys } from "../integratio
 import { createSessionClient } from "../opencode/client.js"
 import { runReview } from "../review/reviewer.js"
 
+const maxJiraDescriptionLength = 4000
+
 export interface ReviewCommandOptions {
   repoPath: string
   baseRef: string
@@ -192,9 +194,21 @@ async function resolveJiraDetailsForReview(repoPath: string, commitMessages: str
     }
 
     logger.info(`Using Jira context from ${taskId} for review prompt.`)
-    return buildJiraDetailsText(taskId, taskDetails)
+    return buildJiraDetailsText(taskId, {
+      ...taskDetails,
+      description: truncateText(taskDetails.description, maxJiraDescriptionLength),
+    })
   } catch (error) {
     logger.warn(`Failed to resolve Jira review context: ${error instanceof Error ? error.message : String(error)}`)
     return ""
   }
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const normalized = value.trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, maxLength - 3)}...`
 }
