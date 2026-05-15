@@ -228,6 +228,30 @@ describe("review command", () => {
     })
   })
 
+  it("retries review without Jira context when structured output is missing", async () => {
+    process.env.JIRA_URL = "https://example.atlassian.net"
+
+    getDiffMock.mockResolvedValue("full diff text")
+    parseChangedFilesFromDiffMock.mockReturnValue({ "src/range.ts": "range-diff" })
+    getCommitMessagesMock.mockResolvedValue("commit one\n\ncommit two")
+    runReviewMock
+      .mockRejectedValueOnce(new Error("OpenCode did not return a structured output payload."))
+      .mockResolvedValueOnce({ "src/range.ts": { issues: [] } })
+
+    await runReviewCommand({
+      repoPath: "/repo",
+      baseRef: "main",
+      headRef: "feature",
+      staged: false,
+      focus: undefined,
+      trace: false,
+    })
+
+    expect(runReviewMock).toHaveBeenNthCalledWith(1, sessionClient, expect.objectContaining({ jiraDetails: "jira context" }))
+    expect(runReviewMock).toHaveBeenNthCalledWith(2, sessionClient, expect.objectContaining({ jiraDetails: "" }))
+    expect(loggerFns.warn).toHaveBeenCalledWith("Structured output failed with Jira context. Retrying review without Jira context.")
+  })
+
   it("continues without Jira details when no Jira task can be resolved", async () => {
     process.env.JIRA_URL = "https://example.atlassian.net"
     getTaskIdFromGitInfoMock.mockResolvedValue(null)
