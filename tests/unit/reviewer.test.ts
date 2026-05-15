@@ -65,58 +65,6 @@ describe("reviewer", () => {
     })
   })
 
-  it("reviews changed files in separate prompts and aggregates results", async () => {
-    const promptStructuredCalls: string[] = []
-    const client = {
-      listAgents: async () => ["reviewer", "general"],
-      createSession: async () => "session-1",
-      promptText: async () => "",
-      promptStructured: async (_sessionId: string, options: { prompt: string }) => {
-        promptStructuredCalls.push(options.prompt)
-        if (options.prompt.includes("--- src/app.ts ---")) {
-          return {
-            issues: [
-              { filePath: "src/app.ts", lineNumber: 10, issueType: "LogicError", comment: "App issue" },
-            ],
-          }
-        }
-
-        return {
-          issues: [
-            { filePath: "src/utils.ts", lineNumber: 4, issueType: "Security", comment: "Utils issue" },
-          ],
-        }
-      },
-      close: () => {},
-    }
-
-    const results = await runReview(client, {
-      ...input,
-      changedFilesMap: {
-        "src/app.ts": "@@ -1,1 +1,1 @@\n-console.log('old')\n+console.log('new')",
-        "src/utils.ts": "@@ -1,1 +1,1 @@\n-export const oldValue = true\n+export const oldValue = false",
-      },
-    })
-
-    expect(promptStructuredCalls).toHaveLength(2)
-    expect(promptStructuredCalls[0]).toContain("--- src/app.ts ---")
-    expect(promptStructuredCalls[0]).not.toContain("--- src/utils.ts ---")
-    expect(promptStructuredCalls[1]).toContain("--- src/utils.ts ---")
-    expect(promptStructuredCalls[1]).not.toContain("--- src/app.ts ---")
-    expect(results).toEqual({
-      "src/app.ts": {
-        issues: [
-          { filePath: "src/app.ts", lineNumber: 10, issueType: "LogicError", comment: "App issue" },
-        ],
-      },
-      "src/utils.ts": {
-        issues: [
-          { filePath: "src/utils.ts", lineNumber: 4, issueType: "Security", comment: "Utils issue" },
-        ],
-      },
-    })
-  })
-
   it("falls back to the built-in general agent when reviewer is unavailable", async () => {
     const client = {
       listAgents: async () => ["general", "plan"],

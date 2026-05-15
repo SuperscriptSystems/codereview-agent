@@ -50,24 +50,19 @@ export interface ResolvedReviewAgent {
 export async function runReview(client: OpencodeSessionClient, input: RunReviewInput): Promise<Record<string, ReviewResult>> {
   const resolvedAgent = await resolveReviewAgent(client)
   const sessionId = await client.createSession("reviewer")
-  const issuesByFile = new Map<string, ReviewResult["issues"]>()
-  const fileReviews = await Promise.all(
-    Object.entries(input.changedFilesMap).map(async ([filePath, diff]) => {
-      const prompt = buildReviewPrompt({
-        ...input,
-        changedFilesMap: { [filePath]: diff },
-      })
-      const envelope = reviewIssuesEnvelopeSchema.parse(await promptReviewIssues(client, sessionId, prompt, resolvedAgent))
-      return { filePath, issues: envelope.issues.filter((issue) => issue.filePath === filePath) }
-    }),
-  )
+  const prompt = buildReviewPrompt(input)
+  const envelope = reviewIssuesEnvelopeSchema.parse(await promptReviewIssues(client, sessionId, prompt, resolvedAgent))
 
-  for (const fileReview of fileReviews) {
-    if (fileReview.issues.length === 0) {
+  const issuesByFile = new Map<string, ReviewResult["issues"]>()
+
+  for (const issue of envelope.issues) {
+    if (!input.changedFilesMap[issue.filePath]) {
       continue
     }
 
-    issuesByFile.set(fileReview.filePath, fileReview.issues)
+    const existing = issuesByFile.get(issue.filePath) ?? []
+    existing.push(issue)
+    issuesByFile.set(issue.filePath, existing)
   }
 
   return Object.fromEntries(
