@@ -22,10 +22,7 @@ export async function handlePrResults(allIssues: CodeIssue[], filesWithIssues: R
       method: "POST",
       body: JSON.stringify({ body: "Excellent work! The AI agent didn't find any issues." }),
     })
-    await api(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
-      method: "POST",
-      body: JSON.stringify({ event: "APPROVE" }),
-    })
+    await tryApprovePullRequest(api, owner, repo, prNumber)
     return
   }
 
@@ -77,7 +74,7 @@ function createGithubApi(token: string) {
 
     if (!response.ok && response.status !== 404) {
       const body = await response.text()
-      throw new Error(`GitHub API ${path} failed: ${response.status} ${body}`)
+      throw new GitHubApiError(path, response.status, body)
     }
 
     if (response.status === 204) {
@@ -86,6 +83,16 @@ function createGithubApi(token: string) {
 
     const text = await response.text()
     return text ? (JSON.parse(text) as unknown) : null
+  }
+}
+
+class GitHubApiError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    readonly responseBody: string,
+  ) {
+    super(`GitHub API ${path} failed: ${status} ${responseBody}`)
   }
 }
 
@@ -170,6 +177,69 @@ async function getLatestCommitSha(
   }
 
   return headSha
+}
+
+async function tryApprovePullRequest(
+  api: ReturnType<typeof createGithubApi>,
+  owner: string,
+  repo: string,
+  prNumber: string,
+): Promise<void> {
+  const [currentUser, pullRequest] = await Promise.all([
+    getCurrentGithubUser(api),
+    getPullRequest(api, owner, repo, prNumber),
+  ])
+
+  const prAuthor = pullRequest.user?.login
+  if (currentUser && prAuthor && currentUser === prAuthor) {
+    logger.warn(`Skipping GitHub auto-approval because the authenticated reviewer ${currentUser} is the PR author.`)
+    return
+  }
+
+  try {
+    await api(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
+      method: "POST",
+      body: JSON.stringify({ event: "APPROVE" }),
+    })
+  } catch (error) {
+    if (error instanceof GitHubApiError && (error.status === 403 || error.status === 422)) {
+      logger.warn(`GitHub auto-approval was skipped: ${formatGithubApprovalFailure(error.responseBody)}`)
+      return
+    }
+
+    throw error
+  }
+}
+
+async function getCurrentGithubUser(api: ReturnType<typeof createGithubApi>): Promise<string | null> {
+  const user = (await api("/user")) as { login?: string } | null
+  return user?.login ?? null
+}
+
+async function getPullRequest(
+  api: ReturnType<typeof createGithubApi>,
+  owner: string,
+  repo: string,
+  prNumber: string,
+): Promise<{ head?: { sha?: string }; user?: { login?: string } }> {
+  return ((await api(`/repos/${owner}/${repo}/pulls/${prNumber}`)) as {
+    head?: { sha?: string }
+    user?: { login?: string }
+  } | null) ?? {}
+}
+
+function formatGithubApprovalFailure(responseBody: string): string {
+  try {
+    const parsed = JSON.parse(responseBody) as { message?: string; errors?: Array<{ message?: string }> }
+    const messages = [parsed.message, ...(parsed.errors ?? []).map((error) => error.message)].filter(Boolean)
+    if (messages.length > 0) {
+      return messages.join("; ")
+    }
+  } catch {
+    // Fall back to the raw response body when GitHub does not return JSON.
+  }
+
+  return responseBody || "GitHub rejected the approval review."
 }
 
 function buildSummaryComment(allIssues: CodeIssue[]): string {

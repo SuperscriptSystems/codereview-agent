@@ -117,16 +117,16 @@ async function syncApprovalState(
   prAuthor?: BitbucketUser | null,
 ): Promise<void> {
   const action = method === "POST" ? "approve" : "remove approval"
-  const result = await api(approvalPath, { method }, [400])
+  if (method === "POST" && isSameBitbucketUser(currentUser, prAuthor)) {
+    logger.warn(`Skipping Bitbucket auto-approval because the authenticated reviewer ${formatBitbucketUser(currentUser)} is the PR author.`)
+    return
+  }
 
-  if (result.status === 400) {
+  const result = await api(approvalPath, { method }, [400, 401, 403, 404, 409])
+
+  if ([400, 401, 403, 404, 409].includes(result.status)) {
     const details = typeof result.data === "string" ? result.data : JSON.stringify(result.data)
     logger.warn(`Bitbucket could not ${action} for this pull request: ${details ?? "unknown reason"}`)
-
-    if (method === "POST" && isSameBitbucketUser(currentUser, prAuthor)) {
-      logger.warn(`Bitbucket API authenticated as PR author (${formatBitbucketUser(currentUser)}), so approval is likely blocked by self-approval rules.`)
-      return
-    }
 
     if (method === "POST" && currentUser) {
       logger.warn(`Bitbucket API authenticated as ${formatBitbucketUser(currentUser)}. Verify that this exact account can approve the PR via API, not just via the UI.`)

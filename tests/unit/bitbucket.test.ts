@@ -155,6 +155,62 @@ describe("bitbucket integration", () => {
     expect(consoleWarnSpy).toHaveBeenCalledWith("[warn] Bitbucket could not approve for this pull request: Approval not allowed")
   })
 
+  it("does not fail when approving a pull request returns 403", async () => {
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? "GET"
+
+      if (url.endsWith("/user")) {
+        return makeResponse(200, { account_id: "acct-1", display_name: "Reviewer Bot" })
+      }
+
+      if (url.endsWith("/pullrequests/7") && method === "GET") {
+        return makeResponse(200, { author: { account_id: "acct-2" } })
+      }
+
+      if (url.includes("/comments") && method === "GET") {
+        return makeResponse(200, { values: [] })
+      }
+
+      if (url.endsWith("/approve") && method === "POST") {
+        return makeResponse(403, undefined, "Forbidden")
+      }
+
+      return makeResponse(201, { id: 1 })
+    }) as typeof fetch
+
+    await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined()
+    expect(consoleWarnSpy).toHaveBeenCalledWith("[warn] Bitbucket could not approve for this pull request: Forbidden")
+  })
+
+  it("skips auto-approval when the authenticated reviewer is the PR author", async () => {
+    const calls: Array<{ url: string; method: string }> = []
+
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? "GET"
+      calls.push({ url, method })
+
+      if (url.endsWith("/user")) {
+        return makeResponse(200, { account_id: "acct-1", display_name: "Reviewer Bot" })
+      }
+
+      if (url.endsWith("/pullrequests/7") && method === "GET") {
+        return makeResponse(200, { author: { account_id: "acct-1", display_name: "Reviewer Bot" } })
+      }
+
+      if (url.includes("/comments") && method === "GET") {
+        return makeResponse(200, { values: [] })
+      }
+
+      return makeResponse(201, { id: 1 })
+    }) as typeof fetch
+
+    await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined()
+    expect(calls.some((call) => call.url.endsWith("/approve") && call.method === "POST")).toBe(false)
+    expect(consoleWarnSpy).toHaveBeenCalledWith("[warn] Skipping Bitbucket auto-approval because the authenticated reviewer Reviewer Bot is the PR author.")
+  })
+
   it("does not fail when approval endpoints return plain-text error bodies", async () => {
     const issue: CodeIssue = {
       filePath: "src/main.ts",
