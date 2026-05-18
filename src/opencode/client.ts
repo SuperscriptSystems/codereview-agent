@@ -100,6 +100,11 @@ export async function createSessionClient(config: Record<string, unknown>, direc
         return textFallback
       }
 
+      const plainTextFallback = await promptStructuredViaTextFallback<T>(client, sessionId, options)
+      if (plainTextFallback !== null) {
+        return plainTextFallback
+      }
+
       if (info?.structured_output === undefined) {
         const promptText = extractPromptText(response)
         const details = promptText ? ` Raw response text: ${truncateText(promptText, 400)}` : ""
@@ -116,6 +121,26 @@ export async function createSessionClient(config: Record<string, unknown>, direc
       await server.close()
     },
   }
+}
+
+async function promptStructuredViaTextFallback<T>(
+  client: OpencodeClient,
+  sessionId: string,
+  options: { agent: string; system?: string; prompt: string; schema: Record<string, unknown> },
+): Promise<T | null> {
+  const response = await client.session.prompt({
+    path: { id: sessionId },
+    body: {
+      agent: options.agent,
+      system: options.system,
+      parts: [{
+        type: "text",
+        text: buildStructuredJsonRetryPrompt(options.prompt, options.schema),
+      }],
+    },
+  })
+
+  return extractStructuredPayloadFromText<T>(response)
 }
 
 async function startIsolatedOpencodeServer(config: Record<string, unknown>, port: number): Promise<{ url: string; close(): Promise<void> }> {
@@ -421,6 +446,24 @@ function truncateText(value: string, maxLength: number): string {
   return `${normalized.slice(0, maxLength - 3)}...`
 }
 
+function buildStructuredJsonRetryPrompt(prompt: string, schema: Record<string, unknown>): string {
+  return [
+    prompt,
+    "",
+    "Your previous response did not produce a structured payload.",
+    "Return only valid JSON wrapped between BEGIN_JSON and END_JSON.",
+    "Do not include any prose outside the markers.",
+    "Required JSON schema:",
+    JSON.stringify(schema, null, 2),
+    "",
+    "BEGIN_JSON",
+    "{",
+    "  \"...\": \"follow the schema above\"",
+    "}",
+    "END_JSON",
+  ].join("\n")
+}
+
 function extractTaggedPayload(text: string): string | null {
   const start = text.indexOf("BEGIN_JSON")
   const end = text.lastIndexOf("END_JSON")
@@ -473,6 +516,7 @@ function extractTextFromParts(parts: Array<{ type: string; text?: string }>): st
 export type { OpencodeClient }
 
 export const __test__ = {
+  buildStructuredJsonRetryPrompt,
   getStructuredOutputInfo,
   extractStructuredPayloadFromText,
   extractPromptText,

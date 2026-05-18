@@ -68,4 +68,20 @@ describe("opencode client structured output extraction", () => {
       },
     })).toBe("first\nsecond")
   })
+
+  it("builds a marker-based retry prompt for plain-text structured fallback", () => {
+    const prompt = __test__.buildStructuredJsonRetryPrompt("Review this diff.", {
+      type: "object",
+      properties: {
+        issues: {
+          type: "array",
+        },
+      },
+    })
+
+    expect(prompt).toContain("Your previous response did not produce a structured payload.")
+    expect(prompt).toContain("BEGIN_JSON")
+    expect(prompt).toContain("END_JSON")
+    expect(prompt).toContain('"issues"')
+  })
 })
