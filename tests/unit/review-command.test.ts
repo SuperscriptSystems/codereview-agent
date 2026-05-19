@@ -152,6 +152,7 @@ describe('review command', () => {
 			jiraDetails: '',
 			reviewRules: ['Project rule'],
 			focusAreas: ['LogicError', 'Security'],
+			failOpen: false,
 			batching: {
 				enabled: true,
 				maxFilesPerBatch: 5,

@@ -20,6 +20,7 @@ describe('reviewer', () => {
 		jiraDetails: 'Jira context:\nTask: ABC-123',
 		reviewRules: ['Prefer guarding null inputs.'],
 		focusAreas: ['LogicError', 'Security'],
+		failOpen: false,
 		batching: {
 			enabled: true,
 			maxFilesPerBatch: 5,
@@ -273,6 +274,73 @@ describe('reviewer', () => {
 				batchTimeoutMs: 20,
 			}),
 		).rejects.toThrow('Review batch timed out after 20ms (1 files).');
+	});
+
+	it('skips a failed batch and continues when fail-open is enabled', async () => {
+		const batchedInput: RunReviewInput = {
+			...input,
+			failOpen: true,
+			changedFilesMap: {
+				'src/a.ts': 'a',
+				'src/b.ts': 'b',
+				'src/c.ts': 'c',
+			},
+			batching: {
+				enabled: true,
+				maxFilesPerBatch: 1,
+				maxDiffCharsPerBatch: 100,
+			},
+		};
+
+		const client = {
+			listAgents: async () => ['reviewer', 'general'],
+			createSession: async () => 'session-1',
+			promptText: async () => '',
+			promptStructured: async <T>(_sessionId: string, options: any) => {
+				if (options.prompt.includes('- src/b.ts')) {
+					throw new Error('Review batch timed out after 20ms (1 files).');
+				}
+
+				const filePath = options.prompt.includes('- src/a.ts')
+					? 'src/a.ts'
+					: 'src/c.ts';
+				return {
+					issues: [
+						{
+							filePath,
+							lineNumber: 1,
+							issueType: 'LogicError',
+							comment: `${filePath} issue`,
+						},
+					],
+				} as unknown as T;
+			},
+			close: async () => {},
+		};
+
+		await expect(runReview(client, batchedInput)).resolves.toEqual({
+			'src/a.ts': {
+				issues: [
+					{
+						filePath: 'src/a.ts',
+						lineNumber: 1,
+						issueType: 'LogicError',
+						comment: 'src/a.ts issue',
+					},
+				],
+			},
+			'src/b.ts': { issues: [] },
+			'src/c.ts': {
+				issues: [
+					{
+						filePath: 'src/c.ts',
+						lineNumber: 1,
+						issueType: 'LogicError',
+						comment: 'src/c.ts issue',
+					},
+				],
+			},
+		});
 	});
 
 	it('splits review batches by file count', () => {

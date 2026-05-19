@@ -153,6 +153,7 @@ export async function runReviewCommand(
 			jiraDetails: '',
 			reviewRules: config.review.customRules,
 			focusAreas,
+			failOpen: config.review.failOpen,
 			batching: config.review.batching,
 			batchTimeoutMs: config.review.batchTimeoutMs,
 			structuredOutputRetryCount: config.review.structuredOutputRetryCount,

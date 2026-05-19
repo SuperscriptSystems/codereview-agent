@@ -46,6 +46,7 @@ export interface RunReviewInput {
 	jiraDetails: string;
 	reviewRules: string[];
 	focusAreas: IssueType[];
+	failOpen: boolean;
 	batching: BatchingConfig;
 	batchTimeoutMs: number;
 	structuredOutputRetryCount: number;
@@ -104,22 +105,34 @@ async function collectReviewIssues(
 				logger.info(
 					`Processing review batch ${index + 1}/${totalBatches} (${Object.keys(changedFilesMap).length} files).`,
 				);
-				envelopes.push(
-					reviewIssuesEnvelopeSchema.parse(
-						await collectReviewIssues(
-							client,
-							{
-								...input,
-								batching: {
-									...input.batching,
-									enabled: false,
+				try {
+					envelopes.push(
+						reviewIssuesEnvelopeSchema.parse(
+							await collectReviewIssues(
+								client,
+								{
+									...input,
+									batching: {
+										...input.batching,
+										enabled: false,
+									},
+									changedFilesMap,
 								},
-								changedFilesMap,
-							},
-							resolvedAgent,
+								resolvedAgent,
+							),
 						),
-					),
-				);
+					);
+				} catch (error) {
+					if (!input.failOpen) {
+						throw error;
+					}
+
+					const message =
+						error instanceof Error ? error.message : String(error);
+					logger.warn(
+						`Skipping failed review batch ${index + 1}/${totalBatches}: ${message}`,
+					);
+				}
 			}
 
 			return {

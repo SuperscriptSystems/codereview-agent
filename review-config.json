@@ -1,67 +1,57 @@
 {
-  "maxContextFiles": 25,
-  "focusAreas": [
-    "LogicError",
-    "Security",
-    "Performance",
-    "TestCoverage"
-  ],
-  "customRules": [],
-  "failOpen": true,
-  "batchTimeoutMs": 60000,
-  "structuredOutputRetryCount": 4,
-  "batching": {
-    "enabled": true,
-    "maxFilesPerBatch": 6,
-    "maxDiffCharsPerBatch": 22000
-  },
-  "testKeywords": [
-    "test",
-    "tests",
-    "spec",
-    "fixture"
-  ],
-  "filtering": {
-    "ignoredExtensions": [
-      ".dll",
-      ".so",
-      ".exe",
-      ".png",
-      ".jpg",
-      ".jpeg",
-      ".gif",
-      ".svg",
-      ".min.js",
-      ".lock",
-      ".zip",
-      ".o",
-      ".a",
-      ".obj",
-      ".lib",
-      ".pdb"
-    ],
-    "ignoredPaths": [
-      "node_modules",
-      "venv",
-      ".venv",
-      ".git",
-      "__pycache__",
-      "dist",
-      "build",
-      "target",
-      ".next",
-      ".pytest_cache"
-    ],
-    "ignoredPatterns": [
-      "Designer.cs",
-      "package-lock.json",
-      "yarn.lock",
-      "pnpm-lock.yaml",
-      "poetry.lock",
-      "package.json"
-    ]
-  },
-  "contextCleanup": {
-    "enabled": false
-  }
+	"maxContextFiles": 25,
+	"focusAreas": ["LogicError", "Security", "Performance", "TestCoverage"],
+	"customRules": [],
+	"failOpen": true,
+	"batchTimeoutMs": 90000,
+	"structuredOutputRetryCount": 4,
+	"batching": {
+		"enabled": true,
+		"maxFilesPerBatch": 4,
+		"maxDiffCharsPerBatch": 22000
+	},
+	"testKeywords": ["test", "tests", "spec", "fixture"],
+	"filtering": {
+		"ignoredExtensions": [
+			".dll",
+			".so",
+			".exe",
+			".png",
+			".jpg",
+			".jpeg",
+			".gif",
+			".svg",
+			".min.js",
+			".lock",
+			".zip",
+			".o",
+			".a",
+			".obj",
+			".lib",
+			".pdb"
+		],
+		"ignoredPaths": [
+			"node_modules",
+			"venv",
+			".venv",
+			".git",
+			"__pycache__",
+			"dist",
+			"build",
+			"target",
+			".next",
+			".pytest_cache"
+		],
+		"ignoredPatterns": [
+			"Designer.cs",
+			"package-lock.json",
+			"yarn.lock",
+			"pnpm-lock.yaml",
+			"poetry.lock",
+			"package.json"
+		]
+	},
+	"contextCleanup": {
+		"enabled": false
+	}
 }
