@@ -293,6 +293,95 @@ describe('reviewer', () => {
 		]);
 	});
 
+	it('processes review batches sequentially', async () => {
+		const callOrder: string[] = [];
+		let activeCalls = 0;
+		let sawParallelCalls = false;
+		const batchedInput: RunReviewInput = {
+			...input,
+			changedFilesMap: {
+				'src/a.ts': 'a',
+				'src/b.ts': 'b',
+				'src/c.ts': 'c',
+			},
+			batching: {
+				enabled: true,
+				maxFilesPerBatch: 1,
+				maxDiffCharsPerBatch: 100,
+			},
+		};
+
+		const client = {
+			listAgents: async () => ['reviewer', 'general'],
+			createSession: async () => 'session-1',
+			promptText: async () => '',
+			promptStructured: async <T>(_sessionId: string, options: any) => {
+				activeCalls += 1;
+				if (activeCalls > 1) {
+					sawParallelCalls = true;
+				}
+
+				const filePath = options.prompt.includes('- src/a.ts')
+					? 'src/a.ts'
+					: options.prompt.includes('- src/b.ts')
+						? 'src/b.ts'
+						: 'src/c.ts';
+
+				callOrder.push(filePath);
+				await new Promise(resolve => setTimeout(resolve, 10));
+				activeCalls -= 1;
+
+				return {
+					issues: [
+						{
+							filePath,
+							lineNumber: 1,
+							issueType: 'LogicError',
+							comment: `${filePath} issue`,
+						},
+					],
+				} as unknown as T;
+			},
+			close: async () => {},
+		};
+
+		await expect(runReview(client, batchedInput)).resolves.toEqual({
+			'src/a.ts': {
+				issues: [
+					{
+						filePath: 'src/a.ts',
+						lineNumber: 1,
+						issueType: 'LogicError',
+						comment: 'src/a.ts issue',
+					},
+				],
+			},
+			'src/b.ts': {
+				issues: [
+					{
+						filePath: 'src/b.ts',
+						lineNumber: 1,
+						issueType: 'LogicError',
+						comment: 'src/b.ts issue',
+					},
+				],
+			},
+			'src/c.ts': {
+				issues: [
+					{
+						filePath: 'src/c.ts',
+						lineNumber: 1,
+						issueType: 'LogicError',
+						comment: 'src/c.ts issue',
+					},
+				],
+			},
+		});
+
+		expect(sawParallelCalls).toBe(false);
+		expect(callOrder).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+	});
+
 	it('no longer depends on annotated file assembly', async () => {
 		const reviewerSource = await import('node:fs/promises').then(
 			({ readFile }) =>

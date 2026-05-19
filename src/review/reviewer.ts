@@ -94,8 +94,10 @@ async function collectReviewIssues(
 		const batches = buildReviewBatches(input.changedFilesMap, input.batching);
 
 		if (batches.length > 1) {
-			const envelopes = await Promise.all(
-				batches.map(async changedFilesMap =>
+			const envelopes = [];
+
+			for (const changedFilesMap of batches) {
+				envelopes.push(
 					reviewIssuesEnvelopeSchema.parse(
 						await collectReviewIssues(
 							client,
@@ -110,8 +112,8 @@ async function collectReviewIssues(
 							resolvedAgent,
 						),
 					),
-				),
-			);
+				);
+			}
 
 			return {
 				issues: envelopes.flatMap(envelope => envelope.issues),
