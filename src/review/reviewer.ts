@@ -8,6 +8,7 @@ import {
 	reviewIssuesEnvelopeJsonSchema,
 	reviewIssuesEnvelopeSchema,
 } from '../core/models.js';
+import { logger } from '../core/logger.js';
 import type { OpencodeSessionClient } from '../opencode/client.js';
 
 export const preferredReviewAgent = 'reviewer';
@@ -46,6 +47,8 @@ export interface RunReviewInput {
 	reviewRules: string[];
 	focusAreas: IssueType[];
 	batching: BatchingConfig;
+	batchTimeoutMs: number;
+	structuredOutputRetryCount: number;
 }
 
 export interface ResolvedReviewAgent {
@@ -95,8 +98,12 @@ async function collectReviewIssues(
 
 		if (batches.length > 1) {
 			const envelopes = [];
+			const totalBatches = batches.length;
 
-			for (const changedFilesMap of batches) {
+			for (const [index, changedFilesMap] of batches.entries()) {
+				logger.info(
+					`Processing review batch ${index + 1}/${totalBatches} (${Object.keys(changedFilesMap).length} files).`,
+				);
 				envelopes.push(
 					reviewIssuesEnvelopeSchema.parse(
 						await collectReviewIssues(
@@ -125,7 +132,17 @@ async function collectReviewIssues(
 
 	try {
 		const prompt = buildReviewPrompt(input);
-		return await promptReviewIssues(client, sessionId, prompt, resolvedAgent);
+		return await withBatchTimeout(
+			promptReviewIssues(
+				client,
+				sessionId,
+				prompt,
+				resolvedAgent,
+				input.structuredOutputRetryCount,
+			),
+			input.batchTimeoutMs,
+			Object.keys(input.changedFilesMap).length,
+		);
 	} catch (error) {
 		if (
 			!shouldRetryReviewInSmallerBatches(error) ||
@@ -133,6 +150,10 @@ async function collectReviewIssues(
 		) {
 			throw error;
 		}
+
+		logger.warn(
+			`Structured review failed for ${Object.keys(input.changedFilesMap).length} files. Retrying in smaller batches.`,
+		);
 	}
 
 	const [leftChangedFilesMap, rightChangedFilesMap] = splitChangedFilesMap(
@@ -162,6 +183,33 @@ async function collectReviewIssues(
 	return {
 		issues: [...leftEnvelope.issues, ...rightEnvelope.issues],
 	};
+}
+
+async function withBatchTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+	fileCount: number,
+): Promise<T> {
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<T>((_, reject) => {
+				timeoutId = setTimeout(() => {
+					reject(
+						new Error(
+							`Review batch timed out after ${timeoutMs}ms (${fileCount} files).`,
+						),
+					);
+				}, timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timeoutId) {
+			clearTimeout(timeoutId);
+		}
+	}
 }
 
 export async function resolveReviewAgent(
@@ -211,6 +259,7 @@ async function promptReviewIssues(
 	sessionId: string,
 	prompt: string,
 	resolvedAgent: ResolvedReviewAgent,
+	structuredOutputRetryCount: number,
 ): Promise<unknown> {
 	try {
 		return await client.promptStructured(sessionId, {
@@ -218,7 +267,7 @@ async function promptReviewIssues(
 			system: resolvedAgent.system,
 			prompt,
 			schema: reviewIssuesEnvelopeJsonSchema,
-			retryCount: 100,
+			retryCount: structuredOutputRetryCount,
 		});
 	} catch (error) {
 		if (!resolvedAgent.discoveryFailed || !isMissingAgentError(error)) {
@@ -230,7 +279,7 @@ async function promptReviewIssues(
 			system: reviewerSystemPrompt,
 			prompt,
 			schema: reviewIssuesEnvelopeJsonSchema,
-			retryCount: 100,
+			retryCount: structuredOutputRetryCount,
 		});
 	}
 }

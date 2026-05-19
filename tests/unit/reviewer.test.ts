@@ -25,6 +25,8 @@ describe('reviewer', () => {
 			maxFilesPerBatch: 5,
 			maxDiffCharsPerBatch: 40000,
 		},
+		batchTimeoutMs: 120000,
+		structuredOutputRetryCount: 10,
 	};
 
 	it('builds a tool-driven prompt with diff and review metadata', () => {
@@ -251,6 +253,26 @@ describe('reviewer', () => {
 		});
 
 		expect(promptStructuredCalls).toHaveLength(3);
+	});
+
+	it('times out a single review batch', async () => {
+		const client = {
+			listAgents: async () => ['reviewer', 'general'],
+			createSession: async () => 'session-1',
+			promptText: async () => '',
+			promptStructured: async <T>() =>
+				await new Promise<T>(() => {
+					// Intentionally never resolves.
+				}),
+			close: async () => {},
+		};
+
+		await expect(
+			runReview(client, {
+				...input,
+				batchTimeoutMs: 20,
+			}),
+		).rejects.toThrow('Review batch timed out after 20ms (1 files).');
 	});
 
 	it('splits review batches by file count', () => {

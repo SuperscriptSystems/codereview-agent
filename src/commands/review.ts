@@ -135,6 +135,10 @@ export async function runReviewCommand(
 	}
 	logger.info(`Focus: ${focusAreas.join(', ')}`);
 	logger.info(`Custom rules: ${config.review.customRules.length}`);
+	logger.info(`Batch timeout: ${config.review.batchTimeoutMs}ms`);
+	logger.info(
+		`Structured output retry count: ${config.review.structuredOutputRetryCount}`,
+	);
 
 	const sessionClient = await createSessionClient(rawConfig, repoPath);
 
@@ -150,6 +154,8 @@ export async function runReviewCommand(
 			reviewRules: config.review.customRules,
 			focusAreas,
 			batching: config.review.batching,
+			batchTimeoutMs: config.review.batchTimeoutMs,
+			structuredOutputRetryCount: config.review.structuredOutputRetryCount,
 		});
 
 		const issueCount = Object.values(reviewResults).reduce(
@@ -194,6 +200,14 @@ export async function runReviewCommand(
 		logger.error(
 			'Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.',
 		);
+
+		if (config.review.failOpen) {
+			logger.warn(
+				'Review is configured to fail open. Skipping review failure so the pipeline can continue.',
+			);
+			return;
+		}
+
 		throw error;
 	} finally {
 		await sessionClient.close();

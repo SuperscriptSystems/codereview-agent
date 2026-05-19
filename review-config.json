@@ -7,6 +7,14 @@
     "TestCoverage"
   ],
   "customRules": [],
+  "failOpen": true,
+  "batchTimeoutMs": 60000,
+  "structuredOutputRetryCount": 4,
+  "batching": {
+    "enabled": true,
+    "maxFilesPerBatch": 6,
+    "maxDiffCharsPerBatch": 22000
+  },
   "testKeywords": [
     "test",
     "tests",

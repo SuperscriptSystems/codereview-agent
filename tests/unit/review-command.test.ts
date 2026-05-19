@@ -84,6 +84,9 @@ describe('review command', () => {
 			review: {
 				focusAreas: ['LogicError', 'Security'],
 				customRules: ['Project rule'],
+				failOpen: false,
+				batchTimeoutMs: 120000,
+				structuredOutputRetryCount: 10,
 				testKeywords: ['test', 'spec'],
 				batching: {
 					enabled: true,
@@ -154,6 +157,8 @@ describe('review command', () => {
 				maxFilesPerBatch: 5,
 				maxDiffCharsPerBatch: 40000,
 			},
+			batchTimeoutMs: 120000,
+			structuredOutputRetryCount: 10,
 		});
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
@@ -310,6 +315,53 @@ describe('review command', () => {
 
 		expect(loggerFns.error).toHaveBeenCalledWith(
 			'Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.',
+		);
+		expect(sessionClient.close).toHaveBeenCalled();
+	});
+
+	it('skips review failures when fail-open is enabled', async () => {
+		parseConfigMock.mockReturnValue({
+			review: {
+				focusAreas: ['LogicError', 'Security'],
+				customRules: ['Project rule'],
+				failOpen: true,
+				batchTimeoutMs: 120000,
+				structuredOutputRetryCount: 10,
+				testKeywords: ['test', 'spec'],
+				batching: {
+					enabled: true,
+					maxFilesPerBatch: 5,
+					maxDiffCharsPerBatch: 40000,
+				},
+				filtering: {
+					ignoredExtensions: [],
+					ignoredPaths: [],
+					ignoredPatterns: ['package-lock.json'],
+				},
+				lockfiles: { excludeFromReview: true, logExcluded: true },
+				noiseFiles: { excludeFromReview: true, logExcluded: true },
+			},
+		});
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/app.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit');
+		runReviewMock.mockRejectedValue(new Error('fetch failed'));
+
+		await expect(
+			runReviewCommand({
+				repoPath: '/repo',
+				baseRef: 'main',
+				headRef: 'HEAD',
+				staged: false,
+				focus: undefined,
+				trace: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(loggerFns.warn).toHaveBeenCalledWith(
+			'Review is configured to fail open. Skipping review failure so the pipeline can continue.',
 		);
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
