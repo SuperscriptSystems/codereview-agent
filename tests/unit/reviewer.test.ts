@@ -23,8 +23,8 @@ describe('reviewer', () => {
 		failOpen: false,
 		batching: {
 			enabled: true,
+			maxBatches: 4,
 			maxFilesPerBatch: 5,
-			maxDiffCharsPerBatch: 40000,
 		},
 		batchTimeoutMs: 120000,
 		structuredOutputRetryCount: 10,
@@ -72,6 +72,7 @@ describe('reviewer', () => {
 						},
 					],
 				}) as unknown as T,
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -103,6 +104,7 @@ describe('reviewer', () => {
 				);
 				return { issues: [] } as unknown as T;
 			},
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -117,6 +119,7 @@ describe('reviewer', () => {
 			createSession: async () => 'session-1',
 			promptText: async () => '',
 			promptStructured: async <T>() => ({ issues: [] }) as unknown as T,
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -145,6 +148,7 @@ describe('reviewer', () => {
 			createSession: async () => 'session-1',
 			promptText: async () => '',
 			promptStructured,
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -169,6 +173,7 @@ describe('reviewer', () => {
 						},
 					],
 				}) as unknown as T,
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -227,6 +232,7 @@ describe('reviewer', () => {
 					],
 				} as unknown as T;
 			},
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -265,6 +271,9 @@ describe('reviewer', () => {
 				await new Promise<T>(() => {
 					// Intentionally never resolves.
 				}),
+			getDiagnostics: () => ({
+				recentServerOutput: 'opencode request still running',
+			}),
 			close: async () => {},
 		};
 
@@ -287,8 +296,8 @@ describe('reviewer', () => {
 			},
 			batching: {
 				enabled: true,
+				maxBatches: 4,
 				maxFilesPerBatch: 1,
-				maxDiffCharsPerBatch: 100,
 			},
 		};
 
@@ -315,6 +324,7 @@ describe('reviewer', () => {
 					],
 				} as unknown as T;
 			},
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -352,8 +362,8 @@ describe('reviewer', () => {
 			},
 			{
 				enabled: true,
+				maxBatches: 4,
 				maxFilesPerBatch: 2,
-				maxDiffCharsPerBatch: 100,
 			},
 		);
 
@@ -363,7 +373,7 @@ describe('reviewer', () => {
 		]);
 	});
 
-	it('splits review batches by diff size', () => {
+	it('ignores diff size when building batches', () => {
 		const batches = buildReviewBatches(
 			{
 				'src/a.ts': '12345',
@@ -372,14 +382,13 @@ describe('reviewer', () => {
 			},
 			{
 				enabled: true,
+				maxBatches: 4,
 				maxFilesPerBatch: 5,
-				maxDiffCharsPerBatch: 8,
 			},
 		);
 
 		expect(batches).toEqual([
-			{ 'src/a.ts': '12345' },
-			{ 'src/b.ts': '67890', 'src/c.ts': 'abc' },
+			{ 'src/a.ts': '12345', 'src/b.ts': '67890', 'src/c.ts': 'abc' },
 		]);
 	});
 
@@ -396,8 +405,8 @@ describe('reviewer', () => {
 			},
 			batching: {
 				enabled: true,
+				maxBatches: 4,
 				maxFilesPerBatch: 1,
-				maxDiffCharsPerBatch: 100,
 			},
 		};
 
@@ -432,6 +441,7 @@ describe('reviewer', () => {
 					],
 				} as unknown as T;
 			},
+			getDiagnostics: () => ({ recentServerOutput: '' }),
 			close: async () => {},
 		};
 
@@ -470,6 +480,32 @@ describe('reviewer', () => {
 
 		expect(sawParallelCalls).toBe(false);
 		expect(callOrder).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+	});
+
+	it('caps review batches to the configured maximum', () => {
+		const batches = buildReviewBatches(
+			{
+				'src/1.ts': '1',
+				'src/2.ts': '2',
+				'src/3.ts': '3',
+				'src/4.ts': '4',
+				'src/5.ts': '5',
+				'src/6.ts': '6',
+			},
+			{
+				enabled: true,
+				maxBatches: 4,
+				maxFilesPerBatch: 1,
+			},
+		);
+
+		expect(batches).toHaveLength(4);
+		expect(batches).toEqual([
+			{ 'src/1.ts': '1', 'src/2.ts': '2' },
+			{ 'src/3.ts': '3', 'src/4.ts': '4' },
+			{ 'src/5.ts': '5' },
+			{ 'src/6.ts': '6' },
+		]);
 	});
 
 	it('no longer depends on annotated file assembly', async () => {

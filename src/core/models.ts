@@ -60,8 +60,8 @@ export type FilteringConfig = z.infer<typeof filteringConfigSchema>;
 
 export const batchingConfigSchema = z.object({
 	enabled: z.boolean().default(true),
+	maxBatches: z.number().int().positive().default(4),
 	maxFilesPerBatch: z.number().int().positive().default(4),
-	maxDiffCharsPerBatch: z.number().int().positive().default(22000),
 });
 export type BatchingConfig = z.infer<typeof batchingConfigSchema>;
 
@@ -81,8 +81,8 @@ export const reviewConfigSchema = z.object({
 	testKeywords: z.array(z.string()).default(['test', 'spec']),
 	batching: batchingConfigSchema.default({
 		enabled: true,
-		maxFilesPerBatch: 5,
-		maxDiffCharsPerBatch: 40000,
+		maxBatches: 4,
+		maxFilesPerBatch: 4,
 	}),
 	filtering: filteringConfigSchema.default({
 		ignoredExtensions: [],
@@ -112,13 +112,13 @@ export const opencodeConfigSchema = z.object({
 		focusAreas: ['LogicError'],
 		customRules: [],
 		failOpen: true,
-		batchTimeoutMs: 90000,
+		batchTimeoutMs: 600000,
 		structuredOutputRetryCount: 4,
 		testKeywords: ['test', 'spec'],
 		batching: {
 			enabled: true,
+			maxBatches: 4,
 			maxFilesPerBatch: 4,
-			maxDiffCharsPerBatch: 22000,
 		},
 		filtering: {
 			ignoredExtensions: [],

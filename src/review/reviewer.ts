@@ -60,6 +60,33 @@ export interface ResolvedReviewAgent {
 	discoveryFailed: boolean;
 }
 
+export interface ReviewBatchTimeoutDetails {
+	fileCount: number;
+	filePaths: string[];
+	diffChars: number;
+	timeoutMs: number;
+	structuredOutputRetryCount: number;
+	recentServerOutput?: string;
+}
+
+export class ReviewBatchTimeoutError extends Error {
+	readonly details: ReviewBatchTimeoutDetails;
+
+	constructor(details: ReviewBatchTimeoutDetails) {
+		super(
+			`Review batch timed out after ${details.timeoutMs}ms (${details.fileCount} files).`,
+		);
+		this.name = 'ReviewBatchTimeoutError';
+		this.details = details;
+	}
+}
+
+export function isReviewBatchTimeoutError(
+	error: unknown,
+): error is ReviewBatchTimeoutError {
+	return error instanceof ReviewBatchTimeoutError;
+}
+
 export async function runReview(
 	client: OpencodeSessionClient,
 	input: RunReviewInput,
@@ -145,6 +172,7 @@ async function collectReviewIssues(
 
 	try {
 		const prompt = buildReviewPrompt(input);
+		const batchDetails = buildBatchTimeoutDetails(client, input);
 		return await withBatchTimeout(
 			promptReviewIssues(
 				client,
@@ -153,8 +181,7 @@ async function collectReviewIssues(
 				resolvedAgent,
 				input.structuredOutputRetryCount,
 			),
-			input.batchTimeoutMs,
-			Object.keys(input.changedFilesMap).length,
+			batchDetails,
 		);
 	} catch (error) {
 		if (
@@ -200,8 +227,7 @@ async function collectReviewIssues(
 
 async function withBatchTimeout<T>(
 	promise: Promise<T>,
-	timeoutMs: number,
-	fileCount: number,
+	details: ReviewBatchTimeoutDetails,
 ): Promise<T> {
 	let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -210,12 +236,8 @@ async function withBatchTimeout<T>(
 			promise,
 			new Promise<T>((_, reject) => {
 				timeoutId = setTimeout(() => {
-					reject(
-						new Error(
-							`Review batch timed out after ${timeoutMs}ms (${fileCount} files).`,
-						),
-					);
-				}, timeoutMs);
+					reject(new ReviewBatchTimeoutError(details));
+				}, details.timeoutMs);
 			}),
 		]);
 	} finally {
@@ -223,6 +245,24 @@ async function withBatchTimeout<T>(
 			clearTimeout(timeoutId);
 		}
 	}
+}
+
+function buildBatchTimeoutDetails(
+	client: OpencodeSessionClient,
+	input: RunReviewInput,
+): ReviewBatchTimeoutDetails {
+	const filePaths = Object.keys(input.changedFilesMap);
+	return {
+		fileCount: filePaths.length,
+		filePaths,
+		diffChars: Object.values(input.changedFilesMap).reduce(
+			(total, diff) => total + diff.length,
+			0,
+		),
+		recentServerOutput: client.getDiagnostics().recentServerOutput,
+		timeoutMs: input.batchTimeoutMs,
+		structuredOutputRetryCount: input.structuredOutputRetryCount,
+	};
 }
 
 export async function resolveReviewAgent(
@@ -331,32 +371,51 @@ export function buildReviewBatches(
 
 	const batches: ChangedFileMap[] = [];
 	let currentBatch: Array<[string, string]> = [];
-	let currentDiffChars = 0;
 
 	for (const entry of entries) {
 		const [filePath, diff] = entry;
-		const diffSize = diff.length;
 		const wouldExceedFileLimit =
 			currentBatch.length >= batching.maxFilesPerBatch;
-		const wouldExceedDiffLimit =
-			currentBatch.length > 0 &&
-			currentDiffChars + diffSize > batching.maxDiffCharsPerBatch;
 
-		if (wouldExceedFileLimit || wouldExceedDiffLimit) {
+		if (wouldExceedFileLimit) {
 			batches.push(Object.fromEntries(currentBatch));
 			currentBatch = [];
-			currentDiffChars = 0;
 		}
 
 		currentBatch.push([filePath, diff]);
-		currentDiffChars += diffSize;
 	}
 
 	if (currentBatch.length > 0) {
 		batches.push(Object.fromEntries(currentBatch));
 	}
 
-	return batches;
+	return capBatchCount(batches, batching.maxBatches);
+}
+
+function capBatchCount(
+	batches: ChangedFileMap[],
+	maxBatches: number,
+): ChangedFileMap[] {
+	if (batches.length <= maxBatches) {
+		return batches;
+	}
+
+	const entries = batches.flatMap(batch => Object.entries(batch));
+	const targetBatchCount = Math.min(maxBatches, entries.length);
+	const cappedBatches: ChangedFileMap[] = [];
+	let startIndex = 0;
+
+	for (let batchIndex = 0; batchIndex < targetBatchCount; batchIndex += 1) {
+		const remainingEntries = entries.length - startIndex;
+		const remainingBatches = targetBatchCount - batchIndex;
+		const batchSize = Math.ceil(remainingEntries / remainingBatches);
+		cappedBatches.push(
+			Object.fromEntries(entries.slice(startIndex, startIndex + batchSize)),
+		);
+		startIndex += batchSize;
+	}
+
+	return cappedBatches;
 }
 
 export function buildReviewPrompt(input: RunReviewInput): string {

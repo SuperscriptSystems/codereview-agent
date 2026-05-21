@@ -3,12 +3,12 @@
 	"focusAreas": ["LogicError", "Security", "Performance", "TestCoverage"],
 	"customRules": [],
 	"failOpen": true,
-	"batchTimeoutMs": 90000,
+	"batchTimeoutMs": 600000,
 	"structuredOutputRetryCount": 4,
 	"batching": {
 		"enabled": true,
-		"maxFilesPerBatch": 4,
-		"maxDiffCharsPerBatch": 22000
+		"maxBatches": 4,
+		"maxFilesPerBatch": 4
 	},
 	"testKeywords": ["test", "tests", "spec", "fixture"],
 	"filtering": {

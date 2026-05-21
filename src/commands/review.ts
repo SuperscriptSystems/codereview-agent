@@ -18,7 +18,11 @@ import { parseChangedFilesFromDiff } from '../git/parse.js';
 import { cleanupAndPostAllComments } from '../integrations/bitbucket.js';
 import { handlePrResults } from '../integrations/github.js';
 import { createSessionClient } from '../opencode/client.js';
-import { buildReviewBatches, runReview } from '../review/reviewer.js';
+import {
+	buildReviewBatches,
+	isReviewBatchTimeoutError,
+	runReview,
+} from '../review/reviewer.js';
 
 export interface ReviewCommandOptions {
 	repoPath: string;
@@ -198,9 +202,9 @@ export async function runReviewCommand(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`OpenCode review execution failed: ${message}`);
-		logger.error(
-			'Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.',
-		);
+		for (const detail of describeReviewFailure(error)) {
+			logger.error(detail);
+		}
 
 		if (config.review.failOpen) {
 			logger.warn(
@@ -213,6 +217,76 @@ export async function runReviewCommand(
 	} finally {
 		await sessionClient.close();
 	}
+}
+
+function describeReviewFailure(error: unknown): string[] {
+	const message = error instanceof Error ? error.message : String(error);
+
+	if (message.includes('Review batch timed out after')) {
+		const details = isReviewBatchTimeoutError(error) ? error.details : null;
+		return [
+			'Review failure category: batch timeout.',
+			'Likely cause: the current OpenCode request did not finish before the configured batch timeout elapsed.',
+			...(details
+				? [
+						`Timed out batch details: ${details.fileCount} files, ${details.diffChars} diff chars, retry count ${details.structuredOutputRetryCount}, timeout ${details.timeoutMs}ms.`,
+						`Timed out batch files: ${details.filePaths.join(', ')}.`,
+						...(details.recentServerOutput
+							? [
+									`Recent OpenCode server output before timeout:\n${details.recentServerOutput}`,
+								]
+							: []),
+					]
+				: []),
+			'What this does and does not mean: the client only knows that no response completed before the deadline. It cannot determine from the timeout alone whether the delay was caused by model latency, OpenCode server load, provider slowdown, or a stuck request.',
+			'Recommended actions: reduce batch size or max diff chars, increase batch timeout, or inspect provider/server latency.',
+		];
+	}
+
+	if (
+		message.includes('fetch failed') ||
+		message.includes('ECONNRESET') ||
+		message.includes('socket hang up')
+	) {
+		return [
+			'Review failure category: transport failure.',
+			'Likely cause: the local OpenCode server or upstream model provider dropped the HTTP request.',
+			'Recommended actions: inspect OpenCode server health, provider availability, network stability, and request concurrency/latency.',
+		];
+	}
+
+	if (message.includes('structured output')) {
+		return [
+			'Review failure category: structured output failure.',
+			'Likely cause: the model did not return valid schema-shaped JSON for the requested review payload.',
+			'Recommended actions: reduce prompt size, reduce batch size, or review model/provider compatibility for structured output.',
+		];
+	}
+
+	if (message.includes('Agent not found')) {
+		return [
+			'Review failure category: missing OpenCode agent.',
+			'Likely cause: the configured reviewer agent is not registered in the running OpenCode server.',
+			'Recommended actions: verify agent registration, bundled prompts, and the active OpenCode config.',
+		];
+	}
+
+	if (
+		message.includes('Unauthorized') ||
+		message.includes('401') ||
+		message.includes('403')
+	) {
+		return [
+			'Review failure category: authentication or authorization failure.',
+			'Likely cause: the OpenCode provider credentials or model permissions are invalid for this request.',
+			'Recommended actions: verify provider auth, model access, and CI secret injection.',
+		];
+	}
+
+	return [
+		'Review failure category: unclassified OpenCode failure.',
+		'Recommended actions: inspect the raw error above together with OpenCode server logs, provider responses, and active review configuration.',
+	];
 }
 
 function isGithubPr(): boolean {

@@ -44,6 +44,13 @@ vi.mock('../../src/opencode/client.js', () => ({
 
 vi.mock('../../src/review/reviewer.js', () => ({
 	buildReviewBatches: buildReviewBatchesMock,
+	isReviewBatchTimeoutError: (error: unknown) =>
+		Boolean(
+			error &&
+			typeof error === 'object' &&
+			'details' in error &&
+			(error as { name?: string }).name === 'ReviewBatchTimeoutError',
+		),
 	runReview: runReviewMock,
 }));
 
@@ -90,8 +97,8 @@ describe('review command', () => {
 				testKeywords: ['test', 'spec'],
 				batching: {
 					enabled: true,
+					maxBatches: 4,
 					maxFilesPerBatch: 5,
-					maxDiffCharsPerBatch: 40000,
 				},
 				filtering: {
 					ignoredExtensions: [],
@@ -155,8 +162,8 @@ describe('review command', () => {
 			failOpen: false,
 			batching: {
 				enabled: true,
+				maxBatches: 4,
 				maxFilesPerBatch: 5,
-				maxDiffCharsPerBatch: 40000,
 			},
 			batchTimeoutMs: 120000,
 			structuredOutputRetryCount: 10,
@@ -315,7 +322,13 @@ describe('review command', () => {
 		).rejects.toThrow('Unauthorized');
 
 		expect(loggerFns.error).toHaveBeenCalledWith(
-			'Verify OpenCode provider auth, model configuration, and custom agent registration before running the full review flow.',
+			'Review failure category: authentication or authorization failure.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Likely cause: the OpenCode provider credentials or model permissions are invalid for this request.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Recommended actions: verify provider auth, model access, and CI secret injection.',
 		);
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
@@ -331,8 +344,8 @@ describe('review command', () => {
 				testKeywords: ['test', 'spec'],
 				batching: {
 					enabled: true,
+					maxBatches: 4,
 					maxFilesPerBatch: 5,
-					maxDiffCharsPerBatch: 40000,
 				},
 				filtering: {
 					ignoredExtensions: [],
@@ -361,10 +374,92 @@ describe('review command', () => {
 			}),
 		).resolves.toBeUndefined();
 
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Review failure category: transport failure.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Likely cause: the local OpenCode server or upstream model provider dropped the HTTP request.',
+		);
 		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Review is configured to fail open. Skipping review failure so the pipeline can continue.',
 		);
 		expect(sessionClient.close).toHaveBeenCalled();
+	});
+
+	it('logs timeout-specific diagnostics for timed out batches', async () => {
+		parseConfigMock.mockReturnValue({
+			review: {
+				focusAreas: ['LogicError', 'Security'],
+				customRules: ['Project rule'],
+				failOpen: true,
+				batchTimeoutMs: 90000,
+				structuredOutputRetryCount: 4,
+				testKeywords: ['test', 'spec'],
+				batching: {
+					enabled: true,
+					maxBatches: 4,
+					maxFilesPerBatch: 4,
+				},
+				filtering: {
+					ignoredExtensions: [],
+					ignoredPaths: [],
+					ignoredPatterns: ['package-lock.json'],
+				},
+				lockfiles: { excludeFromReview: true, logExcluded: true },
+				noiseFiles: { excludeFromReview: true, logExcluded: true },
+			},
+		});
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/app.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit');
+		runReviewMock.mockRejectedValue(
+			Object.assign(
+				new Error('Review batch timed out after 90000ms (1 files).'),
+				{
+					name: 'ReviewBatchTimeoutError',
+					details: {
+						fileCount: 1,
+						filePaths: ['src/app.ts'],
+						diffChars: 10,
+						timeoutMs: 90000,
+						structuredOutputRetryCount: 4,
+						recentServerOutput: 'provider request started',
+					},
+				},
+			),
+		);
+
+		await expect(
+			runReviewCommand({
+				repoPath: '/repo',
+				baseRef: 'main',
+				headRef: 'HEAD',
+				staged: false,
+				focus: undefined,
+				trace: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Review failure category: batch timeout.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Likely cause: the current OpenCode request did not finish before the configured batch timeout elapsed.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Timed out batch details: 1 files, 10 diff chars, retry count 4, timeout 90000ms.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Timed out batch files: src/app.ts.',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'Recent OpenCode server output before timeout:\nprovider request started',
+		);
+		expect(loggerFns.error).toHaveBeenCalledWith(
+			'What this does and does not mean: the client only knows that no response completed before the deadline. It cannot determine from the timeout alone whether the delay was caused by model latency, OpenCode server load, provider slowdown, or a stuck request.',
+		);
 	});
 
 	it('publishes GitHub results after review completes', async () => {

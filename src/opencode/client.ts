@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk';
+import { logger } from '../core/logger.js';
 
 const transportRetryAttempts = 3;
 const transportRetryBaseDelayMs = 500;
@@ -26,6 +27,7 @@ export interface OpencodeSessionClient {
 			retryCount?: number;
 		},
 	): Promise<T>;
+	getDiagnostics(): { recentServerOutput: string };
 	close(): Promise<void>;
 }
 
@@ -183,6 +185,9 @@ export async function createSessionClient(
 		async close(): Promise<void> {
 			await server.close();
 		},
+		getDiagnostics(): { recentServerOutput: string } {
+			return { recentServerOutput: server.getRecentOutput() };
+		},
 	};
 }
 
@@ -196,6 +201,10 @@ async function promptStructuredViaTextFallback<T>(
 		schema: Record<string, unknown>;
 	},
 ): Promise<T | null> {
+	const startedAt = Date.now();
+	logger.info(
+		'Structured output missing, retrying with plain-text JSON fallback.',
+	);
 	const response = await withTransportRetry<
 		Awaited<ReturnType<typeof client.session.prompt>>
 	>(() =>
@@ -216,6 +225,9 @@ async function promptStructuredViaTextFallback<T>(
 			},
 		}),
 	);
+	logger.info(
+		`Plain-text structured fallback completed in ${Date.now() - startedAt}ms.`,
+	);
 
 	return extractStructuredPayloadFromText<T>(response);
 }
@@ -223,7 +235,7 @@ async function promptStructuredViaTextFallback<T>(
 async function startIsolatedOpencodeServer(
 	config: Record<string, unknown>,
 	port: number,
-): Promise<{ url: string; close(): Promise<void> }> {
+): Promise<{ url: string; close(): Promise<void>; getRecentOutput(): string }> {
 	const cwd = await mkdtemp(path.join(tmpdir(), 'code-review-agent-opencode-'));
 	const proc = spawn(
 		'opencode',
@@ -241,6 +253,20 @@ async function startIsolatedOpencodeServer(
 
 	let settled = false;
 	let output = '';
+	const recentOutputLines: string[] = [];
+	const appendRecentOutput = (chunk: string): void => {
+		for (const line of chunk.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed) {
+				continue;
+			}
+
+			recentOutputLines.push(trimmed);
+			if (recentOutputLines.length > 50) {
+				recentOutputLines.shift();
+			}
+		}
+	};
 	const url = await new Promise<string>((resolve, reject) => {
 		const timeoutId = setTimeout(() => {
 			proc.kill();
@@ -252,6 +278,7 @@ async function startIsolatedOpencodeServer(
 		}, 5000);
 
 		proc.stdout?.on('data', chunk => {
+			appendRecentOutput(chunk.toString());
 			if (settled) {
 				return;
 			}
@@ -284,6 +311,7 @@ async function startIsolatedOpencodeServer(
 		});
 
 		proc.stderr?.on('data', chunk => {
+			appendRecentOutput(chunk.toString());
 			output += chunk.toString();
 		});
 
@@ -311,6 +339,9 @@ async function startIsolatedOpencodeServer(
 
 	return {
 		url,
+		getRecentOutput(): string {
+			return recentOutputLines.join('\n');
+		},
 		async close(): Promise<void> {
 			await shutdownChildProcess(proc);
 			await rm(cwd, { recursive: true, force: true });
@@ -322,8 +353,15 @@ async function withTransportRetry<T>(operation: () => Promise<T>): Promise<T> {
 	let lastError: unknown;
 
 	for (let attempt = 1; attempt <= transportRetryAttempts; attempt += 1) {
+		const startedAt = Date.now();
 		try {
-			return await operation();
+			const result = await operation();
+			if (attempt > 1) {
+				logger.info(
+					`OpenCode transport retry succeeded on attempt ${attempt}/${transportRetryAttempts} after ${Date.now() - startedAt}ms.`,
+				);
+			}
+			return result;
 		} catch (error) {
 			lastError = error;
 			if (
@@ -332,6 +370,10 @@ async function withTransportRetry<T>(operation: () => Promise<T>): Promise<T> {
 			) {
 				throw error;
 			}
+
+			logger.warn(
+				`OpenCode transport attempt ${attempt}/${transportRetryAttempts} failed after ${Date.now() - startedAt}ms: ${error instanceof Error ? error.message : String(error)}. Retrying in ${transportRetryBaseDelayMs * attempt}ms.`,
+			);
 
 			await wait(transportRetryBaseDelayMs * attempt);
 		}
