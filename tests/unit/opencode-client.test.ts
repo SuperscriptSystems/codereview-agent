@@ -79,6 +79,35 @@ describe('opencode client structured output extraction', () => {
 		).toBe('first\nsecond');
 	});
 
+	it('extracts structured payload from latest assistant session message', () => {
+		expect(
+			__test__.extractStructuredPayloadFromSessionMessages<{
+				issues: unknown[];
+			}>({
+				data: [
+					{
+						info: { role: 'user' },
+						parts: [
+							{
+								type: 'text',
+								text: 'Required schema: {"issues":{"type":"array"}}',
+							},
+						],
+					},
+					{
+						info: { role: 'assistant' },
+						parts: [
+							{
+								type: 'text',
+								text: 'BEGIN_JSON\n{"issues":[]}\nEND_JSON',
+							},
+						],
+					},
+				],
+			}),
+		).toEqual({ issues: [] });
+	});
+
 	it('builds a marker-based retry prompt for plain-text structured fallback', () => {
 		const prompt = __test__.buildStructuredJsonRetryPrompt(
 			'Review this diff.',
@@ -97,6 +126,7 @@ describe('opencode client structured output extraction', () => {
 		);
 		expect(prompt).toContain('BEGIN_JSON');
 		expect(prompt).toContain('END_JSON');
+		expect(prompt).toContain('empty arrays instead of prose');
 		expect(prompt).toContain('"issues"');
 	});
 

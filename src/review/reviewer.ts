@@ -126,6 +126,7 @@ async function collectReviewIssues(
 
 		if (batches.length > 1) {
 			const envelopes = [];
+			const failedBatchMessages: string[] = [];
 			const totalBatches = batches.length;
 
 			for (const [index, changedFilesMap] of batches.entries()) {
@@ -156,10 +157,17 @@ async function collectReviewIssues(
 
 					const message =
 						error instanceof Error ? error.message : String(error);
+					failedBatchMessages.push(message);
 					logger.warn(
 						`Skipping failed review batch ${index + 1}/${totalBatches}: ${message}`,
 					);
 				}
+			}
+
+			if (envelopes.length === 0 && failedBatchMessages.length > 0) {
+				throw new Error(
+					`All review batches failed; refusing to report a successful empty review. Last failure: ${failedBatchMessages.at(-1)}`,
+				);
 			}
 
 			return {

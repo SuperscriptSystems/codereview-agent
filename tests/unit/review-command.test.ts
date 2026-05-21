@@ -374,14 +374,67 @@ describe('review command', () => {
 			}),
 		).resolves.toBeUndefined();
 
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Review failure category: transport failure.',
 		);
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Likely cause: the local OpenCode server or upstream model provider dropped the HTTP request.',
 		);
 		expect(loggerFns.warn).toHaveBeenCalledWith(
-			'Review is configured to fail open. Skipping review failure so the pipeline can continue.',
+			'Review is configured to fail open. Skipping review failure so the pipeline can continue without approving the pull request.',
+		);
+		expect(sessionClient.close).toHaveBeenCalled();
+	});
+
+	it('does not approve Bitbucket pull requests when fail-open review execution fails', async () => {
+		parseConfigMock.mockReturnValue({
+			review: {
+				focusAreas: ['LogicError', 'Security'],
+				customRules: ['Project rule'],
+				failOpen: true,
+				batchTimeoutMs: 120000,
+				structuredOutputRetryCount: 10,
+				testKeywords: ['test', 'spec'],
+				batching: {
+					enabled: true,
+					maxBatches: 4,
+					maxFilesPerBatch: 5,
+				},
+				filtering: {
+					ignoredExtensions: [],
+					ignoredPaths: [],
+					ignoredPatterns: ['package-lock.json'],
+				},
+				lockfiles: { excludeFromReview: true, logExcluded: true },
+				noiseFiles: { excludeFromReview: true, logExcluded: true },
+			},
+		});
+		process.env.BITBUCKET_PR_ID = '7';
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/app.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit');
+		runReviewMock.mockRejectedValue(
+			new Error(
+				'All review batches failed; refusing to report a successful empty review.',
+			),
+		);
+
+		await expect(
+			runReviewCommand({
+				repoPath: '/repo',
+				baseRef: 'main',
+				headRef: 'HEAD',
+				staged: false,
+				focus: undefined,
+				trace: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(cleanupAndPostAllCommentsMock).not.toHaveBeenCalled();
+		expect(loggerFns.warn).toHaveBeenCalledWith(
+			'Review is configured to fail open. Skipping review failure so the pipeline can continue without approving the pull request.',
 		);
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
@@ -442,22 +495,22 @@ describe('review command', () => {
 			}),
 		).resolves.toBeUndefined();
 
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Review failure category: batch timeout.',
 		);
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Likely cause: the current OpenCode request did not finish before the configured batch timeout elapsed.',
 		);
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Timed out batch details: 1 files, 10 diff chars, retry count 4, timeout 90000ms.',
 		);
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Timed out batch files: src/app.ts.',
 		);
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Recent OpenCode server output before timeout:\nprovider request started',
 		);
-		expect(loggerFns.error).toHaveBeenCalledWith(
+		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'What this does and does not mean: the client only knows that no response completed before the deadline. It cannot determine from the timeout alone whether the delay was caused by model latency, OpenCode server load, provider slowdown, or a stuck request.',
 		);
 	});

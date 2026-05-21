@@ -157,6 +157,14 @@ export async function createSessionClient(
 				return textFallback;
 			}
 
+			const sessionFallback = await extractStructuredPayloadFromSession<T>(
+				client,
+				sessionId,
+			);
+			if (sessionFallback !== null) {
+				return sessionFallback;
+			}
+
 			const plainTextFallback = await promptStructuredViaTextFallback<T>(
 				client,
 				sessionId,
@@ -229,7 +237,33 @@ async function promptStructuredViaTextFallback<T>(
 		`Plain-text structured fallback completed in ${Date.now() - startedAt}ms.`,
 	);
 
-	return extractStructuredPayloadFromText<T>(response);
+	const responsePayload = extractStructuredPayloadFromText<T>(response);
+	if (responsePayload !== null) {
+		return responsePayload;
+	}
+
+	return await extractStructuredPayloadFromSession<T>(client, sessionId);
+}
+
+async function extractStructuredPayloadFromSession<T>(
+	client: OpencodeClient,
+	sessionId: string,
+): Promise<T | null> {
+	try {
+		const response = await withTransportRetry<
+			Awaited<ReturnType<typeof client.session.messages>>
+		>(() =>
+			client.session.messages({
+				path: { id: sessionId },
+			} as Parameters<typeof client.session.messages>[0]),
+		);
+		return extractStructuredPayloadFromSessionMessages<T>(response);
+	} catch (error) {
+		logger.warn(
+			`Could not inspect OpenCode session messages for structured payload: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return null;
+	}
 }
 
 async function startIsolatedOpencodeServer(
@@ -603,6 +637,49 @@ function extractStructuredPayloadFromText<T>(response: unknown): T | null {
 		return null;
 	}
 
+	return parseStructuredPayloadFromText<T>(text);
+}
+
+function extractStructuredPayloadFromSessionMessages<T>(
+	response: unknown,
+): T | null {
+	const messages = getResponseData<
+		Array<{
+			info?: {
+				role?: string;
+				structured?: unknown;
+				structured_output?: unknown;
+			};
+			parts?: Array<{ type: string; text?: string }>;
+		}>
+	>(response);
+
+	if (!Array.isArray(messages)) {
+		return null;
+	}
+
+	for (const message of [...messages].reverse()) {
+		if (message.info?.role && message.info.role !== 'assistant') {
+			continue;
+		}
+
+		const structured =
+			message.info?.structured_output ?? message.info?.structured;
+		if (structured !== undefined) {
+			return structured as T;
+		}
+
+		const text = extractTextFromParts(message.parts ?? []);
+		const payload = parseStructuredPayloadFromText<T>(text);
+		if (payload !== null) {
+			return payload;
+		}
+	}
+
+	return null;
+}
+
+function parseStructuredPayloadFromText<T>(text: string): T | null {
 	const candidatePayloads = [
 		extractTaggedPayload(text),
 		extractFencedJson(text),
@@ -655,6 +732,7 @@ function buildStructuredJsonRetryPrompt(
 		'Your previous response did not produce a structured payload.',
 		'Return only valid JSON wrapped between BEGIN_JSON and END_JSON.',
 		'Do not include any prose outside the markers.',
+		'If there are no findings or no items, return a schema-shaped object with empty arrays instead of prose.',
 		'Required JSON schema:',
 		JSON.stringify(schema, null, 2),
 		'',
@@ -724,5 +802,6 @@ export const __test__ = {
 	isRetryableTransportError,
 	getStructuredOutputInfo,
 	extractStructuredPayloadFromText,
+	extractStructuredPayloadFromSessionMessages,
 	extractPromptText,
 };

@@ -201,14 +201,15 @@ export async function runReviewCommand(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		logger.error(`OpenCode review execution failed: ${message}`);
+		const logFailure = config.review.failOpen ? logger.warn : logger.error;
+		logFailure(`OpenCode review execution failed: ${message}`);
 		for (const detail of describeReviewFailure(error)) {
-			logger.error(detail);
+			logFailure(detail);
 		}
 
 		if (config.review.failOpen) {
 			logger.warn(
-				'Review is configured to fail open. Skipping review failure so the pipeline can continue.',
+				'Review is configured to fail open. Skipping review failure so the pipeline can continue without approving the pull request.',
 			);
 			return;
 		}

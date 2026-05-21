@@ -353,6 +353,37 @@ describe('reviewer', () => {
 		});
 	});
 
+	it('does not return a successful empty review when all fail-open batches fail', async () => {
+		const batchedInput: RunReviewInput = {
+			...input,
+			failOpen: true,
+			changedFilesMap: {
+				'src/a.ts': 'a',
+				'src/b.ts': 'b',
+			},
+			batching: {
+				enabled: true,
+				maxBatches: 4,
+				maxFilesPerBatch: 1,
+			},
+		};
+
+		const client = {
+			listAgents: async () => ['reviewer', 'general'],
+			createSession: async () => 'session-1',
+			promptText: async () => '',
+			promptStructured: async <T>() => {
+				throw new Error('OpenCode did not return a structured output payload.');
+			},
+			getDiagnostics: () => ({ recentServerOutput: '' }),
+			close: async () => {},
+		};
+
+		await expect(runReview(client, batchedInput)).rejects.toThrow(
+			'All review batches failed; refusing to report a successful empty review.',
+		);
+	});
+
 	it('splits review batches by file count', () => {
 		const batches = buildReviewBatches(
 			{
