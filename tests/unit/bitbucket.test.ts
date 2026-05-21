@@ -43,13 +43,20 @@ describe('bitbucket integration', () => {
 	});
 
 	it('approves pull request when there are no issues', async () => {
-		const calls: Array<{ url: string; method: string; body?: string }> = [];
+		const calls: Array<{
+			url: string;
+			method: string;
+			body?: string;
+			contentType?: string;
+		}> = [];
 
 		global.fetch = vi.fn(async (input, init) => {
 			const url = String(input);
 			const method = init?.method ?? 'GET';
 			const body = typeof init?.body === 'string' ? init.body : undefined;
-			calls.push({ url, method, body });
+			const contentType =
+				new Headers(init?.headers).get('Content-Type') ?? undefined;
+			calls.push({ url, method, body, contentType });
 
 			if (url.endsWith('/user')) {
 				return makeResponse(200, { account_id: 'acct-1' });
@@ -70,10 +77,22 @@ describe('bitbucket integration', () => {
 			),
 		).toBe(true);
 		expect(
+			calls.find(
+				call => call.url.endsWith('/approve') && call.method === 'POST',
+			)?.contentType,
+		).toBeUndefined();
+		expect(
 			calls.some(
 				call => call.url.endsWith('/pullrequests/7') && call.method === 'GET',
 			),
 		).toBe(false);
+		expect(
+			calls.find(
+				call =>
+					call.url.includes('/comments') &&
+					call.body?.includes("didn't find any issues"),
+			)?.contentType,
+		).toBe('application/json');
 		expect(
 			calls.some(
 				call =>

@@ -29,7 +29,9 @@ export async function cleanupAndPostAllComments(
 			...init,
 			headers: {
 				Authorization: `Basic ${auth}`,
-				'Content-Type': 'application/json',
+				...(init?.body === undefined
+					? {}
+					: { 'Content-Type': 'application/json' }),
 				...(init?.headers ?? {}),
 			},
 		});
