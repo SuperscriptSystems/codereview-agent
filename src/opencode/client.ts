@@ -640,8 +640,17 @@ function extractStructuredPayloadFromText<T>(response: unknown): T | null {
 	return parseStructuredPayloadFromText<T>(text);
 }
 
+function extractNoIssuesPayloadFromText<T>(
+	response: unknown,
+	schema: Record<string, unknown>,
+): T | null {
+	const text = extractPromptText(response);
+	return parseNoIssuesPayloadFromText<T>(text, schema);
+}
+
 function extractStructuredPayloadFromSessionMessages<T>(
 	response: unknown,
+	schema?: Record<string, unknown>,
 ): T | null {
 	const messages = getResponseData<
 		Array<{
@@ -674,9 +683,56 @@ function extractStructuredPayloadFromSessionMessages<T>(
 		if (payload !== null) {
 			return payload;
 		}
+
+		if (schema) {
+			const noIssuesPayload = parseNoIssuesPayloadFromText<T>(text, schema);
+			if (noIssuesPayload !== null) {
+				return noIssuesPayload;
+			}
+		}
 	}
 
 	return null;
+}
+
+function parseNoIssuesPayloadFromText<T>(
+	text: string,
+	schema: Record<string, unknown>,
+): T | null {
+	if (!isReviewIssuesEnvelopeSchema(schema)) {
+		return null;
+	}
+
+	const normalized = text.replace(/\s+/g, ' ').trim().toLowerCase();
+	if (!normalized) {
+		return null;
+	}
+
+	const noIssuesPatterns = [
+		/\bno\s+(issues|findings|problems|bugs)\b/,
+		/\bdid(?:\s+not|n't)\s+find\s+any\s+(issues|findings|problems|bugs)\b/,
+		/\bnothing\s+to\s+(report|flag)\b/,
+	];
+
+	return noIssuesPatterns.some(pattern => pattern.test(normalized))
+		? ({ issues: [] } as T)
+		: null;
+}
+
+function isReviewIssuesEnvelopeSchema(
+	schema: Record<string, unknown>,
+): boolean {
+	const properties = schema.properties;
+	if (!properties || typeof properties !== 'object') {
+		return false;
+	}
+
+	const issues = (properties as Record<string, unknown>).issues;
+	return Boolean(
+		issues &&
+		typeof issues === 'object' &&
+		(issues as Record<string, unknown>).type === 'array',
+	);
 }
 
 function parseStructuredPayloadFromText<T>(text: string): T | null {
@@ -803,5 +859,6 @@ export const __test__ = {
 	getStructuredOutputInfo,
 	extractStructuredPayloadFromText,
 	extractStructuredPayloadFromSessionMessages,
+	extractNoIssuesPayloadFromText,
 	extractPromptText,
 };

@@ -108,6 +108,44 @@ describe('opencode client structured output extraction', () => {
 		).toEqual({ issues: [] });
 	});
 
+	it('normalizes plain-text no-findings review responses to an empty issues payload', () => {
+		expect(
+			__test__.extractNoIssuesPayloadFromText<{ issues: unknown[] }>(
+				{
+					data: {
+						parts: [
+							{
+								type: 'text',
+								text: 'No issues found in this frontend-only change.',
+							},
+						],
+					},
+				},
+				{
+					type: 'object',
+					properties: { issues: { type: 'array' } },
+					required: ['issues'],
+				},
+			),
+		).toEqual({ issues: [] });
+	});
+
+	it('does not normalize no-findings prose for non-review schemas', () => {
+		expect(
+			__test__.extractNoIssuesPayloadFromText(
+				{
+					data: {
+						parts: [{ type: 'text', text: 'No issues found.' }],
+					},
+				},
+				{
+					type: 'object',
+					properties: { reasoning: { type: 'string' } },
+				},
+			),
+		).toBeNull();
+	});
+
 	it('builds a marker-based retry prompt for plain-text structured fallback', () => {
 		const prompt = __test__.buildStructuredJsonRetryPrompt(
 			'Review this diff.',
