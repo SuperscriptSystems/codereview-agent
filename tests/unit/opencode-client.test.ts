@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { __test__ } from '../../src/opencode/client.js';
 
@@ -106,6 +106,68 @@ describe('opencode client structured output extraction', () => {
 				],
 			}),
 		).toEqual({ issues: [] });
+	});
+
+	it('polls session messages until the assistant payload is available', async () => {
+		const messages = vi
+			.fn()
+			.mockResolvedValueOnce({
+				data: [
+					{
+						info: { role: 'assistant', time: {} },
+						parts: [],
+					},
+				],
+			})
+			.mockResolvedValueOnce({
+				data: [
+					{
+						info: {
+							role: 'assistant',
+							time: { completed: 123 },
+						},
+						parts: [
+							{
+								type: 'text',
+								text: 'BEGIN_JSON\n{"issues":[]}\nEND_JSON',
+							},
+						],
+					},
+				],
+			});
+
+		await expect(
+			__test__.extractStructuredPayloadFromSession<{ issues: unknown[] }>(
+				{ session: { messages } } as any,
+				'session-1',
+				{
+					type: 'object',
+					properties: { issues: { type: 'array' } },
+				},
+			),
+		).resolves.toEqual({ issues: [] });
+		expect(messages).toHaveBeenCalledTimes(2);
+	});
+
+	it('describes latest assistant message state for structured failures', () => {
+		expect(
+			__test__.describeSessionMessages({
+				data: [
+					{
+						info: { role: 'user', time: { completed: 1 } },
+						parts: [{ type: 'text', text: 'review this' }],
+					},
+					{
+						info: {
+							role: 'assistant',
+							time: { completed: 2 },
+							finish: 'stop',
+						},
+						parts: [{ type: 'text', text: 'I could not format JSON.' }],
+					},
+				],
+			}),
+		).toContain('messages=2, assistant completed=true, finish=stop');
 	});
 
 	it('normalizes plain-text no-findings review responses to an empty issues payload', () => {

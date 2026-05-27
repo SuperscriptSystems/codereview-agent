@@ -54,10 +54,7 @@ export async function handlePrResults(allIssues: CodeIssue[], filesWithIssues: R
     })
   }
 
-  await api(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
-    method: "POST",
-    body: JSON.stringify({ event: "REQUEST_CHANGES" }),
-  })
+  await tryApprovePullRequest(api, owner, repo, prNumber)
 }
 
 function createGithubApi(token: string) {

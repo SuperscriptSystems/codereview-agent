@@ -134,7 +134,7 @@ describe("github integration", () => {
     expect(calls.some((call) => call.url.endsWith("/issues/12/comments") && call.method === "POST")).toBe(true)
   })
 
-  it("posts summary, inline comments, and requests changes when issues exist", async () => {
+  it("posts summary, inline comments, and approves when issues exist", async () => {
     const issue: CodeIssue = {
       filePath: "src/main.ts",
       lineNumber: 10,
@@ -184,7 +184,7 @@ describe("github integration", () => {
     await handlePrResults([issue], { "src/main.ts": [issue] })
 
     expect(calls.some((call) => call.url.endsWith("/issues/12/comments") && call.body?.includes("AI Code Review Summary"))).toBe(true)
-    expect(calls.some((call) => call.url.endsWith("/pulls/12/reviews") && call.body?.includes("REQUEST_CHANGES"))).toBe(true)
+    expect(calls.some((call) => call.url.endsWith("/pulls/12/reviews") && call.body?.includes("APPROVE"))).toBe(true)
     expect(calls.some((call) => call.url.endsWith("/pulls/12/reviews") && call.body?.includes("src/main.ts"))).toBe(true)
   })
 

@@ -9,6 +9,8 @@ import { logger } from '../core/logger.js';
 
 const transportRetryAttempts = 3;
 const transportRetryBaseDelayMs = 500;
+const structuredSessionPollAttempts = 12;
+const structuredSessionPollDelayMs = 500;
 
 export interface OpencodeSessionClient {
 	createSession(title: string): Promise<string>;
@@ -157,9 +159,18 @@ export async function createSessionClient(
 				return textFallback;
 			}
 
+			const noIssuesTextFallback = extractNoIssuesPayloadFromText<T>(
+				response,
+				options.schema,
+			);
+			if (noIssuesTextFallback !== null) {
+				return noIssuesTextFallback;
+			}
+
 			const sessionFallback = await extractStructuredPayloadFromSession<T>(
 				client,
 				sessionId,
+				options.schema,
 			);
 			if (sessionFallback !== null) {
 				return sessionFallback;
@@ -176,6 +187,10 @@ export async function createSessionClient(
 
 			if (info?.structured_output === undefined) {
 				const promptText = extractPromptText(response);
+				const sessionDetails = await describeSessionStructuredState(
+					client,
+					sessionId,
+				);
 				const details = promptText
 					? ` Raw response text: ${truncateText(promptText, 400)}`
 					: '';
@@ -183,7 +198,7 @@ export async function createSessionClient(
 					buildOpencodeErrorMessage(
 						'run a structured prompt',
 						response,
-						`OpenCode did not return a structured output payload.${details}`,
+						`OpenCode did not return a structured output payload.${details}${sessionDetails ? ` Session state: ${sessionDetails}` : ''}`,
 					),
 				);
 			}
@@ -242,27 +257,78 @@ async function promptStructuredViaTextFallback<T>(
 		return responsePayload;
 	}
 
-	return await extractStructuredPayloadFromSession<T>(client, sessionId);
+	const noIssuesPayload = extractNoIssuesPayloadFromText<T>(
+		response,
+		options.schema,
+	);
+	if (noIssuesPayload !== null) {
+		return noIssuesPayload;
+	}
+
+	return await extractStructuredPayloadFromSession<T>(
+		client,
+		sessionId,
+		options.schema,
+	);
 }
 
 async function extractStructuredPayloadFromSession<T>(
 	client: OpencodeClient,
 	sessionId: string,
+	schema?: Record<string, unknown>,
 ): Promise<T | null> {
 	try {
-		const response = await withTransportRetry<
-			Awaited<ReturnType<typeof client.session.messages>>
-		>(() =>
-			client.session.messages({
-				path: { id: sessionId },
-			} as Parameters<typeof client.session.messages>[0]),
-		);
-		return extractStructuredPayloadFromSessionMessages<T>(response);
+		let latestResponse: unknown;
+		for (let attempt = 1; attempt <= structuredSessionPollAttempts; attempt += 1) {
+			latestResponse = await getSessionMessages(client, sessionId);
+			const payload = extractStructuredPayloadFromSessionMessages<T>(
+				latestResponse,
+				schema,
+			);
+			if (payload !== null) {
+				return payload;
+			}
+
+			const state = getLatestAssistantMessageState(latestResponse);
+			if (state?.completed && state.textLength > 0) {
+				return null;
+			}
+
+			if (attempt < structuredSessionPollAttempts) {
+				await wait(structuredSessionPollDelayMs);
+			}
+		}
+
+		return null;
 	} catch (error) {
 		logger.warn(
 			`Could not inspect OpenCode session messages for structured payload: ${error instanceof Error ? error.message : String(error)}`,
 		);
 		return null;
+	}
+}
+
+async function getSessionMessages(
+	client: OpencodeClient,
+	sessionId: string,
+): Promise<Awaited<ReturnType<typeof client.session.messages>>> {
+	return await withTransportRetry<Awaited<ReturnType<typeof client.session.messages>>>(
+		() =>
+			client.session.messages({
+				path: { id: sessionId },
+			} as Parameters<typeof client.session.messages>[0]),
+	);
+}
+
+async function describeSessionStructuredState(
+	client: OpencodeClient,
+	sessionId: string,
+): Promise<string> {
+	try {
+		const response = await getSessionMessages(client, sessionId);
+		return describeSessionMessages(response);
+	} catch (error) {
+		return `could not read session messages (${error instanceof Error ? error.message : String(error)})`;
 	}
 }
 
@@ -652,18 +718,9 @@ function extractStructuredPayloadFromSessionMessages<T>(
 	response: unknown,
 	schema?: Record<string, unknown>,
 ): T | null {
-	const messages = getResponseData<
-		Array<{
-			info?: {
-				role?: string;
-				structured?: unknown;
-				structured_output?: unknown;
-			};
-			parts?: Array<{ type: string; text?: string }>;
-		}>
-	>(response);
+	const messages = getSessionMessageEntries(response);
 
-	if (!Array.isArray(messages)) {
+	if (!messages) {
 		return null;
 	}
 
@@ -693,6 +750,102 @@ function extractStructuredPayloadFromSessionMessages<T>(
 	}
 
 	return null;
+}
+
+function describeSessionMessages(response: unknown): string {
+	const messages = getSessionMessageEntries(response);
+	if (!messages) {
+		return `messages payload unavailable; response keys: ${describeObjectKeys(response)}`;
+	}
+
+	const latestAssistant = getLatestAssistantMessageStateFromEntries(messages);
+	if (!latestAssistant) {
+		return `messages=${messages.length}; assistant messages=0`;
+	}
+
+	return [
+		`messages=${messages.length}`,
+		`assistant completed=${latestAssistant.completed}`,
+		latestAssistant.finish ? `finish=${latestAssistant.finish}` : null,
+		latestAssistant.errorName ? `error=${latestAssistant.errorName}` : null,
+		`structured=${latestAssistant.hasStructured}`,
+		`textLength=${latestAssistant.textLength}`,
+		latestAssistant.textPreview
+			? `text="${truncateText(latestAssistant.textPreview, 300)}"`
+			: null,
+	]
+		.filter((value): value is string => Boolean(value))
+		.join(', ');
+}
+
+function getLatestAssistantMessageState(response: unknown):
+	| {
+			completed: boolean;
+			finish?: string;
+			errorName?: string;
+			hasStructured: boolean;
+			textLength: number;
+			textPreview: string;
+	  }
+	| null {
+	const messages = getSessionMessageEntries(response);
+	return messages ? getLatestAssistantMessageStateFromEntries(messages) : null;
+}
+
+function getLatestAssistantMessageStateFromEntries(
+	messages: SessionMessageEntry[],
+): {
+	completed: boolean;
+	finish?: string;
+	errorName?: string;
+	hasStructured: boolean;
+	textLength: number;
+	textPreview: string;
+} | null {
+	for (const message of [...messages].reverse()) {
+		if (message.info?.role && message.info.role !== 'assistant') {
+			continue;
+		}
+
+		const text = extractTextFromParts(message.parts ?? []);
+		return {
+			completed: Boolean(message.info?.time?.completed),
+			finish: message.info?.finish,
+			errorName: message.info?.error?.name,
+			hasStructured:
+				message.info?.structured_output !== undefined ||
+				message.info?.structured !== undefined,
+			textLength: text.length,
+			textPreview: text,
+		};
+	}
+
+	return null;
+}
+
+type SessionMessageEntry = {
+	info?: {
+		role?: string;
+		structured?: unknown;
+		structured_output?: unknown;
+		finish?: string;
+		error?: { name?: string };
+		time?: { completed?: number };
+	};
+	parts?: Array<{ type: string; text?: string }>;
+};
+
+function getSessionMessageEntries(response: unknown): SessionMessageEntry[] | null {
+	const messages = getResponseData<SessionMessageEntry[]>(response);
+	return Array.isArray(messages) ? messages : null;
+}
+
+function describeObjectKeys(value: unknown): string {
+	if (!value || typeof value !== 'object') {
+		return typeof value;
+	}
+
+	return Object.keys(value as Record<string, unknown>).join(', ') || 'none';
 }
 
 function parseNoIssuesPayloadFromText<T>(
@@ -858,7 +1011,9 @@ export const __test__ = {
 	isRetryableTransportError,
 	getStructuredOutputInfo,
 	extractStructuredPayloadFromText,
+	extractStructuredPayloadFromSession,
 	extractStructuredPayloadFromSessionMessages,
 	extractNoIssuesPayloadFromText,
+	describeSessionMessages,
 	extractPromptText,
 };

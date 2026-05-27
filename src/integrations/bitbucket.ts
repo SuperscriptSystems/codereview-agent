@@ -79,8 +79,6 @@ export async function cleanupAndPostAllComments(
 		return;
 	}
 
-	await syncApprovalState(api, `${basePath}/approve`, 'DELETE');
-
 	for (const [filePath, issues] of Object.entries(filesWithIssues)) {
 		for (const issue of issues) {
 			await api(`${basePath}/comments`, {
@@ -99,6 +97,8 @@ export async function cleanupAndPostAllComments(
 			content: { raw: buildBitbucketSummary(allIssues) },
 		}),
 	});
+
+	await syncApprovalState(api, `${basePath}/approve`, 'POST');
 }
 
 async function cleanupBotComments(

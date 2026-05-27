@@ -102,7 +102,7 @@ describe('bitbucket integration', () => {
 		).toBe(true);
 	});
 
-	it('posts inline comments and summary when issues exist', async () => {
+	it('posts inline comments, summary, and approves when issues exist', async () => {
 		const issue: CodeIssue = {
 			filePath: 'src/main.ts',
 			lineNumber: 12,
@@ -125,8 +125,8 @@ describe('bitbucket integration', () => {
 				return makeResponse(200, { values: [] });
 			}
 
-			if (url.endsWith('/approve') && method === 'DELETE') {
-				return makeResponse(204);
+			if (url.endsWith('/approve') && method === 'POST') {
+				return makeResponse(200, { approved: true });
 			}
 
 			return makeResponse(201, { id: 1 });
@@ -136,7 +136,7 @@ describe('bitbucket integration', () => {
 
 		expect(
 			calls.some(
-				call => call.url.endsWith('/approve') && call.method === 'DELETE',
+				call => call.url.endsWith('/approve') && call.method === 'POST',
 			),
 		).toBe(true);
 		expect(
@@ -155,7 +155,7 @@ describe('bitbucket integration', () => {
 		).toBe(true);
 	});
 
-	it('does not fail when removing a missing approval returns 400', async () => {
+	it('does not fail when approving a pull request with issues returns 400', async () => {
 		const issue: CodeIssue = {
 			filePath: 'src/main.ts',
 			lineNumber: 12,
@@ -175,8 +175,8 @@ describe('bitbucket integration', () => {
 				return makeResponse(200, { values: [] });
 			}
 
-			if (url.endsWith('/approve') && method === 'DELETE') {
-				return makeResponse(400, undefined, 'No approval to remove');
+			if (url.endsWith('/approve') && method === 'POST') {
+				return makeResponse(400, undefined, 'Approval not allowed');
 			}
 
 			return makeResponse(201, { id: 1 });
