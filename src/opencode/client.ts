@@ -168,16 +168,6 @@ export async function createSessionClient(
 				return noIssuesTextFallback;
 			}
 
-			const sessionFallback = await extractStructuredPayloadFromSession<T>(
-				client,
-				baseUrl,
-				sessionId,
-				options.schema,
-			);
-			if (sessionFallback !== null) {
-				return sessionFallback;
-			}
-
 			const plainTextFallback = await promptStructuredViaTextFallback<T>(
 				client,
 				baseUrl,
@@ -186,6 +176,16 @@ export async function createSessionClient(
 			);
 			if (plainTextFallback !== null) {
 				return plainTextFallback;
+			}
+
+			const sessionFallback = await extractStructuredPayloadFromSession<T>(
+				client,
+				baseUrl,
+				sessionId,
+				options.schema,
+			);
+			if (sessionFallback !== null) {
+				return sessionFallback;
 			}
 
 			if (info?.structured_output === undefined) {
@@ -256,6 +256,14 @@ async function promptStructuredViaTextFallback<T>(
 	logger.info(
 		`Plain-text structured fallback completed in ${Date.now() - startedAt}ms.`,
 	);
+
+	const fallbackError = getResponseErrorMessage(response);
+	if (fallbackError) {
+		logger.warn(
+			`Plain-text structured fallback returned an OpenCode error: ${truncateText(fallbackError, 500)}`,
+		);
+		return null;
+	}
 
 	const responsePayload = extractStructuredPayloadFromText<T>(response);
 	if (responsePayload !== null) {
@@ -710,6 +718,32 @@ function buildOpencodeErrorMessage(
 		: `OpenCode failed to ${action}: ${errorText}`;
 }
 
+function getResponseErrorMessage(response: unknown): string | null {
+	if (!response || typeof response !== 'object') {
+		return null;
+	}
+
+	const error = (response as { error?: unknown }).error;
+	if (!error) {
+		return null;
+	}
+
+	if (typeof error === 'string') {
+		return error;
+	}
+
+	if (typeof error !== 'object') {
+		return String(error);
+	}
+
+	const candidate = error as {
+		message?: string;
+		name?: string;
+		data?: { message?: string };
+	};
+	return candidate.message ?? candidate.data?.message ?? JSON.stringify(error);
+}
+
 function getStructuredOutputInfo(
 	response: unknown,
 ):
@@ -1136,6 +1170,7 @@ export type { OpencodeClient };
 export const __test__ = {
 	buildStructuredJsonRetryPrompt,
 	isRetryableTransportError,
+	getResponseErrorMessage,
 	getStructuredOutputInfo,
 	extractStructuredPayloadFromText,
 	extractStructuredPayloadFromSession,

@@ -243,6 +243,19 @@ describe('opencode client structured output extraction', () => {
 		expect(prompt).toContain('"issues"');
 	});
 
+	it('extracts OpenCode error messages from nested error data', () => {
+		expect(
+			__test__.getResponseErrorMessage({
+				error: {
+					name: 'BadRequest',
+					data: {
+						message: 'Expected OutputFormatJsonSchema',
+					},
+				},
+			}),
+		).toBe('Expected OutputFormatJsonSchema');
+	});
+
 	it('detects retryable transport failures', () => {
 		expect(
 			__test__.isRetryableTransportError(new TypeError('fetch failed')),
