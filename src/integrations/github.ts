@@ -57,6 +57,21 @@ export async function handlePrResults(allIssues: CodeIssue[], filesWithIssues: R
   await tryApprovePullRequest(api, owner, repo, prNumber)
 }
 
+export async function approvePullRequest(): Promise<void> {
+  const token = process.env.GITHUB_TOKEN
+  const repository = process.env.GITHUB_REPOSITORY
+  const prNumber = process.env.GITHUB_PR_NUMBER
+
+  if (!token || !repository || !prNumber) {
+    throw new Error("GitHub PR environment is not fully configured.")
+  }
+
+  const api = createGithubApi(token)
+  const [owner, repo] = repository.split("/")
+
+  await tryApprovePullRequest(api, owner, repo, prNumber)
+}
+
 function createGithubApi(token: string) {
   return async (path: string, init?: RequestInit): Promise<unknown> => {
     const response = await fetch(`https://api.github.com${path}`, {

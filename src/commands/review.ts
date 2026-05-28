@@ -15,8 +15,14 @@ import {
 	shouldIgnorePath,
 } from '../git/filtering.js';
 import { parseChangedFilesFromDiff } from '../git/parse.js';
-import { cleanupAndPostAllComments } from '../integrations/bitbucket.js';
-import { handlePrResults } from '../integrations/github.js';
+import {
+	approvePullRequest as approveBitbucketPullRequest,
+	cleanupAndPostAllComments,
+} from '../integrations/bitbucket.js';
+import {
+	approvePullRequest as approveGithubPullRequest,
+	handlePrResults,
+} from '../integrations/github.js';
 import { createSessionClient } from '../opencode/client.js';
 import {
 	buildReviewBatches,
@@ -208,8 +214,9 @@ export async function runReviewCommand(
 		}
 
 		if (config.review.failOpen) {
+			await approvePullRequestOnFailOpen();
 			logger.warn(
-				'Review is configured to fail open. Skipping review failure so the pipeline can continue without approving the pull request.',
+				'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
 			);
 			return;
 		}
@@ -217,6 +224,17 @@ export async function runReviewCommand(
 		throw error;
 	} finally {
 		await sessionClient.close();
+	}
+}
+
+async function approvePullRequestOnFailOpen(): Promise<void> {
+	if (isGithubPr()) {
+		await approveGithubPullRequest();
+		return;
+	}
+
+	if (isBitbucketPr()) {
+		await approveBitbucketPullRequest();
 	}
 }
 

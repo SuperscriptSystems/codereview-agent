@@ -46,6 +46,7 @@ export async function createSessionClient(
 		baseUrl: server.url,
 		directory,
 	});
+	const baseUrl = server.url;
 
 	return {
 		async createSession(title: string): Promise<string> {
@@ -169,6 +170,7 @@ export async function createSessionClient(
 
 			const sessionFallback = await extractStructuredPayloadFromSession<T>(
 				client,
+				baseUrl,
 				sessionId,
 				options.schema,
 			);
@@ -178,6 +180,7 @@ export async function createSessionClient(
 
 			const plainTextFallback = await promptStructuredViaTextFallback<T>(
 				client,
+				baseUrl,
 				sessionId,
 				options,
 			);
@@ -189,6 +192,7 @@ export async function createSessionClient(
 				const promptText = extractPromptText(response);
 				const sessionDetails = await describeSessionStructuredState(
 					client,
+					baseUrl,
 					sessionId,
 				);
 				const details = promptText
@@ -216,6 +220,7 @@ export async function createSessionClient(
 
 async function promptStructuredViaTextFallback<T>(
 	client: OpencodeClient,
+	baseUrl: string,
 	sessionId: string,
 	options: {
 		agent: string;
@@ -267,6 +272,7 @@ async function promptStructuredViaTextFallback<T>(
 
 	return await extractStructuredPayloadFromSession<T>(
 		client,
+		baseUrl,
 		sessionId,
 		options.schema,
 	);
@@ -274,13 +280,14 @@ async function promptStructuredViaTextFallback<T>(
 
 async function extractStructuredPayloadFromSession<T>(
 	client: OpencodeClient,
+	baseUrl: string,
 	sessionId: string,
 	schema?: Record<string, unknown>,
 ): Promise<T | null> {
 	try {
 		let latestResponse: unknown;
 		for (let attempt = 1; attempt <= structuredSessionPollAttempts; attempt += 1) {
-			latestResponse = await getSessionMessages(client, sessionId);
+			latestResponse = await getSessionMessages(client, baseUrl, sessionId);
 			const payload = extractStructuredPayloadFromSessionMessages<T>(
 				latestResponse,
 				schema,
@@ -310,25 +317,75 @@ async function extractStructuredPayloadFromSession<T>(
 
 async function getSessionMessages(
 	client: OpencodeClient,
+	baseUrl: string,
 	sessionId: string,
-): Promise<Awaited<ReturnType<typeof client.session.messages>>> {
-	return await withTransportRetry<Awaited<ReturnType<typeof client.session.messages>>>(
+): Promise<unknown> {
+	const sdkResponse = await withTransportRetry<
+		Awaited<ReturnType<typeof client.session.messages>>
+	>(
 		() =>
 			client.session.messages({
 				path: { id: sessionId },
 			} as Parameters<typeof client.session.messages>[0]),
 	);
+
+	if (getResponseData<unknown>(sdkResponse) !== undefined) {
+		return sdkResponse;
+	}
+
+	return await fetchSessionMessages(baseUrl, sessionId, sdkResponse);
 }
 
 async function describeSessionStructuredState(
 	client: OpencodeClient,
+	baseUrl: string,
 	sessionId: string,
 ): Promise<string> {
 	try {
-		const response = await getSessionMessages(client, sessionId);
+		const response = await getSessionMessages(client, baseUrl, sessionId);
 		return describeSessionMessages(response);
 	} catch (error) {
 		return `could not read session messages (${error instanceof Error ? error.message : String(error)})`;
+	}
+}
+
+async function fetchSessionMessages(
+	baseUrl: string,
+	sessionId: string,
+	sdkResponse: unknown,
+): Promise<unknown> {
+	const url = `${baseUrl.replace(/\/$/, '')}/session/${encodeURIComponent(sessionId)}/message`;
+
+	try {
+		const response = await fetch(url);
+		const text = await response.text();
+		let data: unknown = text;
+		if (text) {
+			try {
+				data = JSON.parse(text) as unknown;
+			} catch {
+				data = text;
+			}
+		}
+
+		if (response.ok) {
+			return { data };
+		}
+
+		return {
+			error: {
+				message: `Raw session messages request failed: ${response.status} ${response.statusText}`,
+				body: data,
+				sdkResponse: summarizeErrorResponse(sdkResponse),
+			},
+		};
+	} catch (error) {
+		return {
+			error: {
+				message: `Raw session messages request failed: ${error instanceof Error ? error.message : String(error)}`,
+				sdkResponse: summarizeErrorResponse(sdkResponse),
+			},
+		};
 	}
 }
 
@@ -755,6 +812,11 @@ function extractStructuredPayloadFromSessionMessages<T>(
 function describeSessionMessages(response: unknown): string {
 	const messages = getSessionMessageEntries(response);
 	if (!messages) {
+		const error = describeErrorPayload(response);
+		if (error) {
+			return error;
+		}
+
 		return `messages payload unavailable; response keys: ${describeObjectKeys(response)}`;
 	}
 
@@ -846,6 +908,71 @@ function describeObjectKeys(value: unknown): string {
 	}
 
 	return Object.keys(value as Record<string, unknown>).join(', ') || 'none';
+}
+
+function describeErrorPayload(value: unknown): string | null {
+	if (!value || typeof value !== 'object') {
+		return null;
+	}
+
+	const error = (value as { error?: unknown }).error;
+	if (!error) {
+		return null;
+	}
+
+	if (typeof error === 'string') {
+		return `messages request error: ${truncateText(error, 500)}`;
+	}
+
+	if (typeof error !== 'object') {
+		return `messages request error: ${String(error)}`;
+	}
+
+	const candidate = error as {
+		message?: string;
+		body?: unknown;
+		sdkResponse?: unknown;
+	};
+	const details = [
+		candidate.message,
+		candidate.body === undefined
+			? null
+			: `body=${truncateText(formatDiagnosticValue(candidate.body), 500)}`,
+		candidate.sdkResponse === undefined
+			? null
+			: `sdk=${truncateText(formatDiagnosticValue(candidate.sdkResponse), 500)}`,
+	]
+		.filter((part): part is string => Boolean(part))
+		.join('; ');
+
+	return details ? `messages request error: ${details}` : null;
+}
+
+function formatDiagnosticValue(value: unknown): string {
+	return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function summarizeErrorResponse(response: unknown): unknown {
+	if (!response || typeof response !== 'object') {
+		return response;
+	}
+
+	const candidate = response as {
+		error?: unknown;
+		response?: { status?: number; statusText?: string };
+	};
+
+	return {
+		keys: describeObjectKeys(response),
+		status: candidate.response?.status,
+		statusText: candidate.response?.statusText,
+		error:
+			typeof candidate.error === 'string'
+				? candidate.error
+				: candidate.error
+					? JSON.stringify(candidate.error).slice(0, 1000)
+					: undefined,
+	};
 }
 
 function parseNoIssuesPayloadFromText<T>(

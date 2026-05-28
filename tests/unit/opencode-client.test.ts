@@ -139,6 +139,7 @@ describe('opencode client structured output extraction', () => {
 		await expect(
 			__test__.extractStructuredPayloadFromSession<{ issues: unknown[] }>(
 				{ session: { messages } } as any,
+				'http://127.0.0.1:4096',
 				'session-1',
 				{
 					type: 'object',
@@ -168,6 +169,18 @@ describe('opencode client structured output extraction', () => {
 				],
 			}),
 		).toContain('messages=2, assistant completed=true, finish=stop');
+	});
+
+	it('describes session message endpoint errors', () => {
+		expect(
+			__test__.describeSessionMessages({
+				error: {
+					message: 'Raw session messages request failed: 404 Not Found',
+					body: { message: 'missing route' },
+					sdkResponse: { status: 404, error: 'Not Found' },
+				},
+			}),
+		).toContain('Raw session messages request failed: 404 Not Found');
 	});
 
 	it('normalizes plain-text no-findings review responses to an empty issues payload', () => {

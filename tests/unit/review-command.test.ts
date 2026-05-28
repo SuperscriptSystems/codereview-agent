@@ -14,7 +14,9 @@ const createSessionClientMock = vi.fn();
 const buildReviewBatchesMock = vi.fn();
 const runReviewMock = vi.fn();
 const handlePrResultsMock = vi.fn();
+const approveGithubPullRequestMock = vi.fn();
 const cleanupAndPostAllCommentsMock = vi.fn();
+const approveBitbucketPullRequestMock = vi.fn();
 
 vi.mock('../../src/config/load-config.js', () => ({
 	loadRawConfig: loadRawConfigMock,
@@ -55,10 +57,12 @@ vi.mock('../../src/review/reviewer.js', () => ({
 }));
 
 vi.mock('../../src/integrations/github.js', () => ({
+	approvePullRequest: approveGithubPullRequestMock,
 	handlePrResults: handlePrResultsMock,
 }));
 
 vi.mock('../../src/integrations/bitbucket.js', () => ({
+	approvePullRequest: approveBitbucketPullRequestMock,
 	cleanupAndPostAllComments: cleanupAndPostAllCommentsMock,
 }));
 
@@ -381,12 +385,14 @@ describe('review command', () => {
 			'Likely cause: the local OpenCode server or upstream model provider dropped the HTTP request.',
 		);
 		expect(loggerFns.warn).toHaveBeenCalledWith(
-			'Review is configured to fail open. Skipping review failure so the pipeline can continue without approving the pull request.',
+			'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
 		);
+		expect(approveGithubPullRequestMock).not.toHaveBeenCalled();
+		expect(approveBitbucketPullRequestMock).not.toHaveBeenCalled();
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
 
-	it('does not approve Bitbucket pull requests when fail-open review execution fails', async () => {
+	it('approves Bitbucket pull requests when fail-open review execution fails', async () => {
 		parseConfigMock.mockReturnValue({
 			review: {
 				focusAreas: ['LogicError', 'Security'],
@@ -433,8 +439,60 @@ describe('review command', () => {
 		).resolves.toBeUndefined();
 
 		expect(cleanupAndPostAllCommentsMock).not.toHaveBeenCalled();
+		expect(approveBitbucketPullRequestMock).toHaveBeenCalledTimes(1);
 		expect(loggerFns.warn).toHaveBeenCalledWith(
-			'Review is configured to fail open. Skipping review failure so the pipeline can continue without approving the pull request.',
+			'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
+		);
+		expect(sessionClient.close).toHaveBeenCalled();
+	});
+
+	it('approves GitHub pull requests when fail-open review execution fails', async () => {
+		parseConfigMock.mockReturnValue({
+			review: {
+				focusAreas: ['LogicError', 'Security'],
+				customRules: ['Project rule'],
+				failOpen: true,
+				batchTimeoutMs: 120000,
+				structuredOutputRetryCount: 10,
+				testKeywords: ['test', 'spec'],
+				batching: {
+					enabled: true,
+					maxBatches: 4,
+					maxFilesPerBatch: 5,
+				},
+				filtering: {
+					ignoredExtensions: [],
+					ignoredPaths: [],
+					ignoredPatterns: ['package-lock.json'],
+				},
+				lockfiles: { excludeFromReview: true, logExcluded: true },
+				noiseFiles: { excludeFromReview: true, logExcluded: true },
+			},
+		});
+		process.env.GITHUB_ACTIONS = 'true';
+		process.env.GITHUB_PR_NUMBER = '15';
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/app.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit');
+		runReviewMock.mockRejectedValue(new Error('fetch failed'));
+
+		await expect(
+			runReviewCommand({
+				repoPath: '/repo',
+				baseRef: 'main',
+				headRef: 'HEAD',
+				staged: false,
+				focus: undefined,
+				trace: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(handlePrResultsMock).not.toHaveBeenCalled();
+		expect(approveGithubPullRequestMock).toHaveBeenCalledTimes(1);
+		expect(loggerFns.warn).toHaveBeenCalledWith(
+			'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
 		);
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
