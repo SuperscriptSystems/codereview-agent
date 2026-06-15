@@ -123,7 +123,18 @@ function createBitbucketApi() {
 }
 
 function resolveBitbucketAuthHeader(): string {
+	const accessToken = process.env.BITBUCKET_ACCESS_TOKEN?.trim();
+	if (accessToken) {
+		return `Bearer ${accessToken}`;
+	}
+
 	const token = process.env.BITBUCKET_TOKEN?.trim();
+	const email = process.env.BITBUCKET_USER_EMAIL?.trim();
+	if (token && email) {
+		const auth = Buffer.from(`${email}:${token}`).toString('base64');
+		return `Basic ${auth}`;
+	}
+
 	if (token) {
 		return `Bearer ${token}`;
 	}
@@ -136,7 +147,7 @@ function resolveBitbucketAuthHeader(): string {
 	}
 
 	throw new Error(
-		'Bitbucket credentials are not configured. Set BITBUCKET_TOKEN or BITBUCKET_APP_USERNAME and BITBUCKET_APP_PASSWORD.',
+		'Bitbucket credentials are not configured. Set BITBUCKET_ACCESS_TOKEN, or BITBUCKET_TOKEN with BITBUCKET_USER_EMAIL, or BITBUCKET_APP_USERNAME and BITBUCKET_APP_PASSWORD.',
 	);
 }
 

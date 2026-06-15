@@ -24,7 +24,9 @@ describe('bitbucket integration', () => {
 	let consoleWarnSpy: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		delete process.env.BITBUCKET_ACCESS_TOKEN;
 		delete process.env.BITBUCKET_TOKEN;
+		delete process.env.BITBUCKET_USER_EMAIL;
 		process.env.BITBUCKET_APP_USERNAME = 'user';
 		process.env.BITBUCKET_APP_PASSWORD = 'pass';
 		process.env.BITBUCKET_WORKSPACE = 'workspace';
@@ -109,8 +111,9 @@ describe('bitbucket integration', () => {
 		).toBe(true);
 	});
 
-	it('prefers bearer token authentication when BITBUCKET_TOKEN is set', async () => {
+	it('uses basic auth for Atlassian API token when email is provided', async () => {
 		process.env.BITBUCKET_TOKEN = 'scoped-token';
+		process.env.BITBUCKET_USER_EMAIL = 'bot@example.com';
 		delete process.env.BITBUCKET_APP_USERNAME;
 		delete process.env.BITBUCKET_APP_PASSWORD;
 
@@ -137,7 +140,38 @@ describe('bitbucket integration', () => {
 		await cleanupAndPostAllComments([], {});
 
 		expect(authorizations.length).toBeGreaterThan(0);
-		expect(authorizations.every(value => value === 'Bearer scoped-token')).toBe(true);
+		expect(authorizations.every(value => value === `Basic ${Buffer.from('bot@example.com:scoped-token').toString('base64')}`)).toBe(true);
+	});
+
+	it('uses bearer auth for Bitbucket access tokens', async () => {
+		process.env.BITBUCKET_ACCESS_TOKEN = 'access-token';
+		delete process.env.BITBUCKET_APP_USERNAME;
+		delete process.env.BITBUCKET_APP_PASSWORD;
+
+		const authorizations: string[] = [];
+
+		global.fetch = vi.fn(async (_input, init) => {
+			authorizations.push(new Headers(init?.headers).get('Authorization') ?? '');
+
+			if (String(_input).endsWith('/user')) {
+				return makeResponse(200, { account_id: 'acct-1' });
+			}
+
+			if (String(_input).includes('/comments') && (init?.method ?? 'GET') === 'GET') {
+				return makeResponse(200, { values: [] });
+			}
+
+			if (String(_input).endsWith('/approve') && (init?.method ?? 'GET') === 'POST') {
+				return makeResponse(200, { approved: true });
+			}
+
+			return makeResponse(201, { id: 1 });
+		}) as typeof fetch;
+
+		await cleanupAndPostAllComments([], {});
+
+		expect(authorizations.length).toBeGreaterThan(0);
+		expect(authorizations.every(value => value === 'Bearer access-token')).toBe(true);
 	});
 
 	it('throws a clear error when no Bitbucket auth is configured', async () => {
@@ -146,7 +180,7 @@ describe('bitbucket integration', () => {
 		delete process.env.BITBUCKET_APP_PASSWORD;
 
 		await expect(cleanupAndPostAllComments([], {})).rejects.toThrow(
-			'Bitbucket credentials are not configured. Set BITBUCKET_TOKEN or BITBUCKET_APP_USERNAME and BITBUCKET_APP_PASSWORD.',
+			'Bitbucket credentials are not configured. Set BITBUCKET_ACCESS_TOKEN, or BITBUCKET_TOKEN with BITBUCKET_USER_EMAIL, or BITBUCKET_APP_USERNAME and BITBUCKET_APP_PASSWORD.',
 		);
 	});
 
