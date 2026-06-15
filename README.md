@@ -67,7 +67,7 @@ Optional integrations use these environment variables:
 
 - Jira: `JIRA_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`
 - GitHub: `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `GITHUB_PR_NUMBER`
-- Bitbucket: `BITBUCKET_APP_USERNAME`, `BITBUCKET_APP_PASSWORD`, `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_PR_ID`
+- Bitbucket: `BITBUCKET_TOKEN` or `BITBUCKET_APP_USERNAME` + `BITBUCKET_APP_PASSWORD`, `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_PR_ID`
 
 ## Quality Checks
 
@@ -103,6 +103,7 @@ pipelines:
               --volume ${BITBUCKET_CLONE_DIR}:/repo \
               --workdir /repo \
               --env LLM_API_KEY=$LLM_API_KEY \
+              --env BITBUCKET_TOKEN=$BITBUCKET_TOKEN \
               --env BITBUCKET_APP_USERNAME=$BITBUCKET_APP_USERNAME \
               --env BITBUCKET_APP_PASSWORD=$BITBUCKET_APP_PASSWORD \
               --env JIRA_URL=$JIRA_URL \

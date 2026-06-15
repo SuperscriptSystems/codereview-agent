@@ -5,61 +5,15 @@ export async function cleanupAndPostAllComments(
 	allIssues: CodeIssue[],
 	filesWithIssues: Record<string, CodeIssue[]>,
 ): Promise<void> {
-	const username = process.env.BITBUCKET_APP_USERNAME;
-	const password = process.env.BITBUCKET_APP_PASSWORD;
 	const workspace = process.env.BITBUCKET_WORKSPACE;
 	const repoSlug = process.env.BITBUCKET_REPO_SLUG;
 	const prId = process.env.BITBUCKET_PR_ID;
 
-	if (!username || !password || !workspace || !repoSlug || !prId) {
+	if (!workspace || !repoSlug || !prId) {
 		throw new Error('Bitbucket PR environment is not fully configured.');
 	}
 
-	const auth = Buffer.from(`${username}:${password}`).toString('base64');
-	const api = async (
-		path: string,
-		init?: RequestInit,
-		allowedStatuses: number[] = [],
-	): Promise<BitbucketApiResult> => {
-		const url =
-			path.startsWith('http://') || path.startsWith('https://')
-				? path
-				: `https://api.bitbucket.org/2.0${path}`;
-		const response = await fetch(url, {
-			...init,
-			headers: {
-				Authorization: `Basic ${auth}`,
-				...(init?.body === undefined
-					? {}
-					: { 'Content-Type': 'application/json' }),
-				...(init?.headers ?? {}),
-			},
-		});
-
-		if (
-			!response.ok &&
-			response.status !== 404 &&
-			!allowedStatuses.includes(response.status)
-		) {
-			const body = await response.text();
-			throw new Error(
-				`Bitbucket API ${path} failed: ${response.status} ${body}`,
-			);
-		}
-
-		const text = await response.text();
-		let data: unknown = null;
-
-		if (text) {
-			try {
-				data = JSON.parse(text) as unknown;
-			} catch {
-				data = text;
-			}
-		}
-
-		return { status: response.status, data };
-	};
+	const api = createBitbucketApi();
 
 	const basePath = `/repositories/${workspace}/${repoSlug}/pullrequests/${prId}`;
 	const me = (await api(`/user`)).data as BitbucketUser | null;
@@ -102,18 +56,27 @@ export async function cleanupAndPostAllComments(
 }
 
 export async function approvePullRequest(): Promise<void> {
-	const username = process.env.BITBUCKET_APP_USERNAME;
-	const password = process.env.BITBUCKET_APP_PASSWORD;
 	const workspace = process.env.BITBUCKET_WORKSPACE;
 	const repoSlug = process.env.BITBUCKET_REPO_SLUG;
 	const prId = process.env.BITBUCKET_PR_ID;
 
-	if (!username || !password || !workspace || !repoSlug || !prId) {
+	if (!workspace || !repoSlug || !prId) {
 		throw new Error('Bitbucket PR environment is not fully configured.');
 	}
 
-	const auth = Buffer.from(`${username}:${password}`).toString('base64');
-	const api = async (
+	const api = createBitbucketApi();
+
+	await syncApprovalState(
+		api,
+		`/repositories/${workspace}/${repoSlug}/pullrequests/${prId}/approve`,
+		'POST',
+	);
+}
+
+function createBitbucketApi() {
+	const authHeader = resolveBitbucketAuthHeader();
+
+	return async (
 		path: string,
 		init?: RequestInit,
 		allowedStatuses: number[] = [],
@@ -125,7 +88,7 @@ export async function approvePullRequest(): Promise<void> {
 		const response = await fetch(url, {
 			...init,
 			headers: {
-				Authorization: `Basic ${auth}`,
+				Authorization: authHeader,
 				...(init?.body === undefined
 					? {}
 					: { 'Content-Type': 'application/json' }),
@@ -157,11 +120,23 @@ export async function approvePullRequest(): Promise<void> {
 
 		return { status: response.status, data };
 	};
+}
 
-	await syncApprovalState(
-		api,
-		`/repositories/${workspace}/${repoSlug}/pullrequests/${prId}/approve`,
-		'POST',
+function resolveBitbucketAuthHeader(): string {
+	const token = process.env.BITBUCKET_TOKEN?.trim();
+	if (token) {
+		return `Bearer ${token}`;
+	}
+
+	const username = process.env.BITBUCKET_APP_USERNAME;
+	const password = process.env.BITBUCKET_APP_PASSWORD;
+	if (username && password) {
+		const auth = Buffer.from(`${username}:${password}`).toString('base64');
+		return `Basic ${auth}`;
+	}
+
+	throw new Error(
+		'Bitbucket credentials are not configured. Set BITBUCKET_TOKEN or BITBUCKET_APP_USERNAME and BITBUCKET_APP_PASSWORD.',
 	);
 }
 

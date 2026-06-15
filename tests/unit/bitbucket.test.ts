@@ -24,6 +24,7 @@ describe('bitbucket integration', () => {
 	let consoleWarnSpy: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		delete process.env.BITBUCKET_TOKEN;
 		process.env.BITBUCKET_APP_USERNAME = 'user';
 		process.env.BITBUCKET_APP_PASSWORD = 'pass';
 		process.env.BITBUCKET_WORKSPACE = 'workspace';
@@ -48,6 +49,7 @@ describe('bitbucket integration', () => {
 			method: string;
 			body?: string;
 			contentType?: string;
+			authorization?: string;
 		}> = [];
 
 		global.fetch = vi.fn(async (input, init) => {
@@ -56,7 +58,9 @@ describe('bitbucket integration', () => {
 			const body = typeof init?.body === 'string' ? init.body : undefined;
 			const contentType =
 				new Headers(init?.headers).get('Content-Type') ?? undefined;
-			calls.push({ url, method, body, contentType });
+			const authorization =
+				new Headers(init?.headers).get('Authorization') ?? undefined;
+			calls.push({ url, method, body, contentType, authorization });
 
 			if (url.endsWith('/user')) {
 				return makeResponse(200, { account_id: 'acct-1' });
@@ -93,6 +97,9 @@ describe('bitbucket integration', () => {
 					call.body?.includes("didn't find any issues"),
 			)?.contentType,
 		).toBe('application/json');
+		expect(calls[0]?.authorization).toBe(
+			`Basic ${Buffer.from('user:pass').toString('base64')}`,
+		);
 		expect(
 			calls.some(
 				call =>
@@ -100,6 +107,47 @@ describe('bitbucket integration', () => {
 					call.body?.includes("didn't find any issues"),
 			),
 		).toBe(true);
+	});
+
+	it('prefers bearer token authentication when BITBUCKET_TOKEN is set', async () => {
+		process.env.BITBUCKET_TOKEN = 'scoped-token';
+		delete process.env.BITBUCKET_APP_USERNAME;
+		delete process.env.BITBUCKET_APP_PASSWORD;
+
+		const authorizations: string[] = [];
+
+		global.fetch = vi.fn(async (_input, init) => {
+			authorizations.push(new Headers(init?.headers).get('Authorization') ?? '');
+
+			if (String(_input).endsWith('/user')) {
+				return makeResponse(200, { account_id: 'acct-1' });
+			}
+
+			if (String(_input).includes('/comments') && (init?.method ?? 'GET') === 'GET') {
+				return makeResponse(200, { values: [] });
+			}
+
+			if (String(_input).endsWith('/approve') && (init?.method ?? 'GET') === 'POST') {
+				return makeResponse(200, { approved: true });
+			}
+
+			return makeResponse(201, { id: 1 });
+		}) as typeof fetch;
+
+		await cleanupAndPostAllComments([], {});
+
+		expect(authorizations.length).toBeGreaterThan(0);
+		expect(authorizations.every(value => value === 'Bearer scoped-token')).toBe(true);
+	});
+
+	it('throws a clear error when no Bitbucket auth is configured', async () => {
+		delete process.env.BITBUCKET_TOKEN;
+		delete process.env.BITBUCKET_APP_USERNAME;
+		delete process.env.BITBUCKET_APP_PASSWORD;
+
+		await expect(cleanupAndPostAllComments([], {})).rejects.toThrow(
+			'Bitbucket credentials are not configured. Set BITBUCKET_TOKEN or BITBUCKET_APP_USERNAME and BITBUCKET_APP_PASSWORD.',
+		);
 	});
 
 	it('posts inline comments, summary, and approves when issues exist', async () => {
