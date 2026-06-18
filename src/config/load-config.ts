@@ -19,29 +19,20 @@ export function parseConfig(rawConfig: Record<string, unknown>): OpencodeReviewe
 }
 
 export async function loadRawConfig(repoPath: string): Promise<Record<string, unknown>> {
-  const configPath = path.join(repoPath, "opencode.json")
-  const reviewConfigPath = path.join(repoPath, "review-config.json")
+	const reviewConfigPath = path.join(repoPath, "review-config.json")
 
-  let opencodeConfig: Record<string, unknown> | undefined
-  let configDir: string | undefined
+	let opencodeConfig: Record<string, unknown> | undefined
+	let configDir: string | undefined
 
-  try {
-    opencodeConfig = await readJsonFile(configPath)
-    configDir = path.dirname(configPath)
-  } catch (error) {
-    logger.warn(`Could not load opencode.json at ${configPath}. Falling back to bundled config.`)
-    logger.debug(error instanceof Error ? error.stack ?? error.message : String(error))
-
-    try {
-      opencodeConfig = await readJsonFile(fallbackConfigPath)
-      configDir = path.dirname(fallbackConfigPath)
-    } catch (fallbackError) {
-      logger.warn(`Could not load fallback opencode.json at ${fallbackConfigPath}. Using defaults.`)
-      logger.debug(fallbackError instanceof Error ? fallbackError.stack ?? fallbackError.message : String(fallbackError))
-      opencodeConfig = {}
-      configDir = packageRoot
-    }
-  }
+	try {
+		opencodeConfig = await readJsonFile(fallbackConfigPath)
+		configDir = path.dirname(fallbackConfigPath)
+	} catch (fallbackError) {
+		logger.warn(`Could not load bundled opencode.json at ${fallbackConfigPath}. Using defaults.`)
+		logger.debug(fallbackError instanceof Error ? fallbackError.stack ?? fallbackError.message : String(fallbackError))
+		opencodeConfig = {}
+		configDir = packageRoot
+	}
 
   let reviewConfig: Record<string, unknown> | undefined
 
