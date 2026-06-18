@@ -1,6 +1,11 @@
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ChangedFileMap, FilteringConfig } from '../core/models.js';
+import type {
+	ChangedFileMap,
+	FilteringConfig,
+	GeneratedFileConfig,
+} from '../core/models.js';
 
 const lockfileNames = new Set([
 	'package-lock.json',
@@ -86,5 +91,53 @@ export function isFrontendNoiseFile(filePath: string): boolean {
 		filename.endsWith('.snap') ||
 		filename.includes('.stories.') ||
 		filename.endsWith('.map')
+	);
+}
+
+export async function isGeneratedFile(
+	repoPath: string,
+	filePath: string,
+	config: GeneratedFileConfig,
+): Promise<boolean> {
+	if (matchesGeneratedPathRule(filePath, config)) {
+		return true;
+	}
+
+	if (config.contentMarkers.length === 0) {
+		return false;
+	}
+
+	try {
+		const content = await readFile(path.join(repoPath, filePath), 'utf8');
+		const normalizedContent = content.toLowerCase();
+		return config.contentMarkers.some(marker =>
+			normalizedContent.includes(marker.toLowerCase()),
+		);
+	} catch {
+		return false;
+	}
+}
+
+function matchesGeneratedPathRule(
+	filePath: string,
+	config: GeneratedFileConfig,
+): boolean {
+	const normalizedPath = filePath.replaceAll('\\', '/').toLowerCase();
+	const pathParts = normalizedPath.split('/');
+	const filename = path.basename(normalizedPath);
+
+	return (
+		pathParts.some(part =>
+			config.ignoredPaths.some(
+				ignoredPath => part === ignoredPath.toLowerCase(),
+			),
+		) ||
+		config.ignoredPatterns.some(pattern => {
+			const normalizedPattern = pattern.toLowerCase();
+			return (
+				filename.includes(normalizedPattern) ||
+				normalizedPath.includes(normalizedPattern)
+			);
+		})
 	);
 }

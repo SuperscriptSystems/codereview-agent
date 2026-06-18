@@ -61,6 +61,7 @@ Key config fields:
 - `review.focusAreas`
 - `review.customRules`
 - `review.filtering`
+- `review.generatedFiles`
 - `review.testKeywords`
 
 Optional integrations use these environment variables:
@@ -127,7 +128,7 @@ name: AI Code Review
 
 on:
   pull_request:
-    branches: [ "main" ]
+    branches: ['main']
 
 jobs:
   review:

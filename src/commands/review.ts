@@ -10,6 +10,7 @@ import {
 } from '../git/diff.js';
 import {
 	filterTestFiles,
+	isGeneratedFile,
 	isFrontendNoiseFile,
 	isLockfile,
 	shouldIgnorePath,
@@ -74,6 +75,11 @@ export async function runReviewCommand(
 	const lockfiles = Object.keys(filteredChangedFilesMap).filter(filePath =>
 		isLockfile(filePath),
 	);
+	const generatedFiles = await collectGeneratedFiles(
+		repoPath,
+		filteredChangedFilesMap,
+		config.review.generatedFiles,
+	);
 	const noiseFiles = Object.keys(filteredChangedFilesMap).filter(filePath =>
 		isFrontendNoiseFile(filePath),
 	);
@@ -82,6 +88,14 @@ export async function runReviewCommand(
 		filteredChangedFilesMap = Object.fromEntries(
 			Object.entries(filteredChangedFilesMap).filter(
 				([filePath]) => !isLockfile(filePath),
+			),
+		);
+	}
+
+	if (config.review.generatedFiles.excludeFromReview) {
+		filteredChangedFilesMap = Object.fromEntries(
+			Object.entries(filteredChangedFilesMap).filter(
+				([filePath]) => !generatedFiles.includes(filePath),
 			),
 		);
 	}
@@ -95,9 +109,13 @@ export async function runReviewCommand(
 	}
 
 	if (Object.keys(filteredChangedFilesMap).length === 0) {
-		if (lockfiles.length > 0 || noiseFiles.length > 0) {
+		if (
+			lockfiles.length > 0 ||
+			generatedFiles.length > 0 ||
+			noiseFiles.length > 0
+		) {
 			logger.info(
-				'Only excluded lockfiles or frontend noise files changed; application-code review skipped.',
+				'Only excluded lockfiles, generated files, or frontend noise files changed; application-code review skipped.',
 			);
 		}
 
@@ -119,6 +137,13 @@ export async function runReviewCommand(
 		lockfiles.length > 0
 	) {
 		logger.info(`Excluded lockfiles: ${lockfiles.join(', ')}`);
+	}
+	if (
+		config.review.generatedFiles.excludeFromReview &&
+		config.review.generatedFiles.logExcluded &&
+		generatedFiles.length > 0
+	) {
+		logger.info(`Excluded generated files: ${generatedFiles.join(', ')}`);
 	}
 	if (
 		config.review.noiseFiles.excludeFromReview &&
@@ -225,6 +250,23 @@ export async function runReviewCommand(
 	} finally {
 		await sessionClient.close();
 	}
+}
+
+async function collectGeneratedFiles(
+	repoPath: string,
+	changedFilesMap: Record<string, string>,
+	config: (typeof import('../core/models.js'))['generatedFileConfigSchema']['_type'],
+): Promise<string[]> {
+	const generatedFileFlags = await Promise.all(
+		Object.keys(changedFilesMap).map(async filePath => ({
+			filePath,
+			isGenerated: await isGeneratedFile(repoPath, filePath, config),
+		})),
+	);
+
+	return generatedFileFlags
+		.filter(entry => entry.isGenerated)
+		.map(entry => entry.filePath);
 }
 
 async function approvePullRequestOnFailOpen(): Promise<void> {
