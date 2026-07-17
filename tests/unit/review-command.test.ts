@@ -18,6 +18,7 @@ const handlePrResultsMock = vi.fn();
 const approveGithubPullRequestMock = vi.fn();
 const cleanupAndPostAllCommentsMock = vi.fn();
 const approveBitbucketPullRequestMock = vi.fn();
+const buildJiraContextMock = vi.fn();
 
 vi.mock('../../src/config/load-config.js', () => ({
 	loadRawConfig: loadRawConfigMock,
@@ -66,6 +67,10 @@ vi.mock('../../src/integrations/github.js', () => ({
 vi.mock('../../src/integrations/bitbucket.js', () => ({
 	approvePullRequest: approveBitbucketPullRequestMock,
 	cleanupAndPostAllComments: cleanupAndPostAllCommentsMock,
+}));
+
+vi.mock('../../src/integrations/jira-context.js', () => ({
+	buildJiraContext: buildJiraContextMock,
 }));
 
 const loggerFns = {
@@ -146,6 +151,7 @@ describe('review command', () => {
 		shouldIgnorePathMock.mockReturnValue(false);
 		buildReviewBatchesMock.mockImplementation(value => [value]);
 		createSessionClientMock.mockResolvedValue(sessionClient);
+		buildJiraContextMock.mockResolvedValue('');
 		runReviewMock.mockResolvedValue({});
 
 		delete process.env.GITHUB_ACTIONS;
@@ -228,6 +234,44 @@ describe('review command', () => {
 				changedFilesMap: { 'src/range.ts': 'range-diff' },
 				commitMessages: 'commit one\n\ncommit two',
 				focusAreas: ['Security'],
+			}),
+		);
+		expect(buildJiraContextMock).toHaveBeenCalledWith(
+			'/repo',
+			'commit one\n\ncommit two',
+		);
+	});
+
+	it('passes Jira task context into review inputs when available', async () => {
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/range.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('feat: EX-123 add feature');
+		buildJiraContextMock.mockResolvedValue(
+			'--- JIRA TASK CONTEXT (EX-123) ---\nTitle: Add feature\nDescription:\nAcceptance criteria\n---------------------------------',
+		);
+		runReviewMock.mockResolvedValue({ 'src/range.ts': { issues: [] } });
+
+		await runReviewCommand({
+			repoPath: '/repo',
+			baseRef: 'main',
+			headRef: 'feature',
+			staged: false,
+			focus: undefined,
+			trace: false,
+		});
+
+		expect(runReviewMock).toHaveBeenCalledWith(
+			sessionClient,
+			expect.objectContaining({
+				jiraDetails: expect.stringContaining('Title: Add feature'),
+			}),
+		);
+		expect(runReviewMock).toHaveBeenCalledWith(
+			sessionClient,
+			expect.objectContaining({
+				jiraDetails: expect.stringContaining('Acceptance criteria'),
 			}),
 		);
 	});

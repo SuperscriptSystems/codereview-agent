@@ -20,6 +20,7 @@ import {
 	approvePullRequest as approveBitbucketPullRequest,
 	cleanupAndPostAllComments,
 } from '../integrations/bitbucket.js';
+import { buildJiraContext } from '../integrations/jira-context.js';
 import {
 	approvePullRequest as approveGithubPullRequest,
 	handlePrResults,
@@ -177,6 +178,7 @@ export async function runReviewCommand(
 	);
 
 	const sessionClient = await createSessionClient(rawConfig, repoPath);
+	const jiraDetails = await buildJiraContext(repoPath, commitMessages);
 
 	try {
 		const reviewResults = await runReview(sessionClient, {
@@ -186,7 +188,7 @@ export async function runReviewCommand(
 			headRef: options.headRef,
 			changedFilesMap: filteredChangedFilesMap,
 			commitMessages,
-			jiraDetails: '',
+			jiraDetails,
 			reviewRules: config.review.customRules,
 			focusAreas,
 			failOpen: config.review.failOpen,
