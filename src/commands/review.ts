@@ -120,6 +120,7 @@ export async function runReviewCommand(
 		}
 
 		logger.info('No non-test files remain after filtering.');
+		await approvePullRequestIfPresent();
 		return;
 	}
 
@@ -239,7 +240,7 @@ export async function runReviewCommand(
 		}
 
 		if (config.review.failOpen) {
-			await approvePullRequestOnFailOpen();
+			await approvePullRequestIfPresent();
 			logger.warn(
 				'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
 			);
@@ -269,7 +270,7 @@ async function collectGeneratedFiles(
 		.map(entry => entry.filePath);
 }
 
-async function approvePullRequestOnFailOpen(): Promise<void> {
+async function approvePullRequestIfPresent(): Promise<void> {
 	if (isGithubPr()) {
 		await approveGithubPullRequest();
 		return;

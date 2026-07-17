@@ -251,7 +251,9 @@ describe('review command', () => {
 		expect(createSessionClientMock).not.toHaveBeenCalled();
 	});
 
-	it('returns early when only filtered files remain', async () => {
+	it('approves GitHub pull requests when only filtered files remain', async () => {
+		process.env.GITHUB_ACTIONS = 'true';
+		process.env.GITHUB_PR_NUMBER = '15';
 		getDiffMock.mockResolvedValue('full diff text');
 		parseChangedFilesFromDiffMock.mockReturnValue({ 'src/app.ts': 'app-diff' });
 		getCommitMessagesMock.mockResolvedValue('commit');
@@ -268,9 +270,33 @@ describe('review command', () => {
 
 		expect(runReviewMock).not.toHaveBeenCalled();
 		expect(createSessionClientMock).not.toHaveBeenCalled();
+		expect(approveGithubPullRequestMock).toHaveBeenCalledTimes(1);
+		expect(approveBitbucketPullRequestMock).not.toHaveBeenCalled();
 	});
 
-	it('returns early when only excluded lockfiles remain', async () => {
+	it('returns early without approval when only filtered files remain outside a pull request', async () => {
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({ 'src/app.ts': 'app-diff' });
+		getCommitMessagesMock.mockResolvedValue('commit');
+		shouldIgnorePathMock.mockReturnValue(true);
+
+		await runReviewCommand({
+			repoPath: '/repo',
+			baseRef: 'main',
+			headRef: 'HEAD',
+			staged: false,
+			focus: undefined,
+			trace: false,
+		});
+
+		expect(runReviewMock).not.toHaveBeenCalled();
+		expect(createSessionClientMock).not.toHaveBeenCalled();
+		expect(approveGithubPullRequestMock).not.toHaveBeenCalled();
+		expect(approveBitbucketPullRequestMock).not.toHaveBeenCalled();
+	});
+
+	it('approves Bitbucket pull requests when only excluded lockfiles remain', async () => {
+		process.env.BITBUCKET_PR_ID = '7';
 		getDiffMock.mockResolvedValue('full diff text');
 		parseChangedFilesFromDiffMock.mockReturnValue({
 			'package-lock.json': 'lock-diff',
@@ -292,6 +318,8 @@ describe('review command', () => {
 		);
 		expect(runReviewMock).not.toHaveBeenCalled();
 		expect(createSessionClientMock).not.toHaveBeenCalled();
+		expect(approveBitbucketPullRequestMock).toHaveBeenCalledTimes(1);
+		expect(approveGithubPullRequestMock).not.toHaveBeenCalled();
 	});
 
 	it('returns early when only excluded generated files remain', async () => {
