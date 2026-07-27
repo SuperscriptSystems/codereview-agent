@@ -120,17 +120,25 @@ describe('bitbucket integration', () => {
 		const authorizations: string[] = [];
 
 		global.fetch = vi.fn(async (_input, init) => {
-			authorizations.push(new Headers(init?.headers).get('Authorization') ?? '');
+			authorizations.push(
+				new Headers(init?.headers).get('Authorization') ?? '',
+			);
 
 			if (String(_input).endsWith('/user')) {
 				return makeResponse(200, { account_id: 'acct-1' });
 			}
 
-			if (String(_input).includes('/comments') && (init?.method ?? 'GET') === 'GET') {
+			if (
+				String(_input).includes('/comments') &&
+				(init?.method ?? 'GET') === 'GET'
+			) {
 				return makeResponse(200, { values: [] });
 			}
 
-			if (String(_input).endsWith('/approve') && (init?.method ?? 'GET') === 'POST') {
+			if (
+				String(_input).endsWith('/approve') &&
+				(init?.method ?? 'GET') === 'POST'
+			) {
 				return makeResponse(200, { approved: true });
 			}
 
@@ -140,7 +148,13 @@ describe('bitbucket integration', () => {
 		await cleanupAndPostAllComments([], {});
 
 		expect(authorizations.length).toBeGreaterThan(0);
-		expect(authorizations.every(value => value === `Basic ${Buffer.from('bot@example.com:scoped-token').toString('base64')}`)).toBe(true);
+		expect(
+			authorizations.every(
+				value =>
+					value ===
+					`Basic ${Buffer.from('bot@example.com:scoped-token').toString('base64')}`,
+			),
+		).toBe(true);
 	});
 
 	it('uses bearer auth for Bitbucket access tokens', async () => {
@@ -151,17 +165,25 @@ describe('bitbucket integration', () => {
 		const authorizations: string[] = [];
 
 		global.fetch = vi.fn(async (_input, init) => {
-			authorizations.push(new Headers(init?.headers).get('Authorization') ?? '');
+			authorizations.push(
+				new Headers(init?.headers).get('Authorization') ?? '',
+			);
 
 			if (String(_input).endsWith('/user')) {
 				return makeResponse(200, { account_id: 'acct-1' });
 			}
 
-			if (String(_input).includes('/comments') && (init?.method ?? 'GET') === 'GET') {
+			if (
+				String(_input).includes('/comments') &&
+				(init?.method ?? 'GET') === 'GET'
+			) {
 				return makeResponse(200, { values: [] });
 			}
 
-			if (String(_input).endsWith('/approve') && (init?.method ?? 'GET') === 'POST') {
+			if (
+				String(_input).endsWith('/approve') &&
+				(init?.method ?? 'GET') === 'POST'
+			) {
 				return makeResponse(200, { approved: true });
 			}
 
@@ -171,7 +193,9 @@ describe('bitbucket integration', () => {
 		await cleanupAndPostAllComments([], {});
 
 		expect(authorizations.length).toBeGreaterThan(0);
-		expect(authorizations.every(value => value === 'Bearer access-token')).toBe(true);
+		expect(authorizations.every(value => value === 'Bearer access-token')).toBe(
+			true,
+		);
 	});
 
 	it('throws a clear error when no Bitbucket auth is configured', async () => {
@@ -429,5 +453,53 @@ describe('bitbucket integration', () => {
 				call => call.url.endsWith('/comments/202') && call.method === 'DELETE',
 			),
 		).toBe(true);
+	});
+
+	it('continues when deleting a previous bot comment returns 500', async () => {
+		const calls: Array<{ url: string; method: string; body?: string }> = [];
+
+		global.fetch = vi.fn(async (input, init) => {
+			const url = String(input);
+			const method = init?.method ?? 'GET';
+			const body = typeof init?.body === 'string' ? init.body : undefined;
+			calls.push({ url, method, body });
+
+			if (url.endsWith('/user')) {
+				return makeResponse(200, { account_id: 'acct-1' });
+			}
+
+			if (url.endsWith('/pullrequests/7/comments') && method === 'GET') {
+				return makeResponse(200, {
+					values: [{ id: 101, user: { account_id: 'acct-1' } }],
+				});
+			}
+
+			if (url.endsWith('/comments/101') && method === 'DELETE') {
+				return makeResponse(500, undefined, 'Internal Server Error');
+			}
+
+			if (url.endsWith('/approve') && method === 'POST') {
+				return makeResponse(200, { approved: true });
+			}
+
+			return makeResponse(201, { id: 1 });
+		}) as typeof fetch;
+
+		await expect(cleanupAndPostAllComments([], {})).resolves.toBeUndefined();
+		expect(
+			calls.some(
+				call => call.url.endsWith('/comments/101') && call.method === 'DELETE',
+			),
+		).toBe(true);
+		expect(
+			calls.some(
+				call =>
+					call.url.includes('/comments') &&
+					call.body?.includes("didn't find any issues"),
+			),
+		).toBe(true);
+		expect(consoleWarnSpy).toHaveBeenCalledWith(
+			'[warn] Bitbucket could not delete previous bot comment 101; continuing cleanup: 500 Internal Server Error',
+		);
 	});
 });

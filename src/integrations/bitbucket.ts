@@ -188,7 +188,21 @@ async function cleanupBotComments(
 
 	for (const comment of comments) {
 		if (comment.user?.account_id === accountId && !parentIds.has(comment.id)) {
-			await api(`${commentsPath}/${comment.id}`, { method: 'DELETE' });
+			const result = await api(
+				`${commentsPath}/${comment.id}`,
+				{ method: 'DELETE' },
+				[400, 401, 403, 404, 409, 500, 502, 503, 504],
+			);
+
+			if (result.status >= 400) {
+				const details =
+					typeof result.data === 'string'
+						? result.data
+						: JSON.stringify(result.data);
+				logger.warn(
+					`Bitbucket could not delete previous bot comment ${comment.id}; continuing cleanup: ${result.status} ${details ?? 'unknown reason'}`,
+				);
+			}
 		}
 	}
 }
