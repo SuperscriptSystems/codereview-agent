@@ -173,6 +173,7 @@ export async function runReviewCommand(
 	logger.info(`Focus: ${focusAreas.join(', ')}`);
 	logger.info(`Custom rules: ${config.review.customRules.length}`);
 	logger.info(`Batch timeout: ${config.review.batchTimeoutMs}ms`);
+	logger.info(`Total review timeout: ${config.review.totalTimeoutMs}ms`);
 	logger.info(
 		`Structured output retry count: ${config.review.structuredOutputRetryCount}`,
 	);
@@ -181,21 +182,24 @@ export async function runReviewCommand(
 	const jiraDetails = await buildJiraContext(repoPath, commitMessages);
 
 	try {
-		const reviewResults = await runReview(sessionClient, {
-			repoPath,
-			staged: options.staged,
-			baseRef: options.baseRef,
-			headRef: options.headRef,
-			changedFilesMap: filteredChangedFilesMap,
-			commitMessages,
-			jiraDetails,
-			reviewRules: config.review.customRules,
-			focusAreas,
-			failOpen: config.review.failOpen,
-			batching: config.review.batching,
-			batchTimeoutMs: config.review.batchTimeoutMs,
-			structuredOutputRetryCount: config.review.structuredOutputRetryCount,
-		});
+		const reviewResults = await withTotalReviewTimeout(
+			runReview(sessionClient, {
+				repoPath,
+				staged: options.staged,
+				baseRef: options.baseRef,
+				headRef: options.headRef,
+				changedFilesMap: filteredChangedFilesMap,
+				commitMessages,
+				jiraDetails,
+				reviewRules: config.review.customRules,
+				focusAreas,
+				failOpen: config.review.failOpen,
+				batching: config.review.batching,
+				batchTimeoutMs: config.review.batchTimeoutMs,
+				structuredOutputRetryCount: config.review.structuredOutputRetryCount,
+			}),
+			config.review.totalTimeoutMs,
+		);
 
 		const issueCount = Object.values(reviewResults).reduce(
 			(count, result) => count + result.issues.length,
@@ -255,6 +259,29 @@ export async function runReviewCommand(
 	}
 }
 
+async function withTotalReviewTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+): Promise<T> {
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<T>((_, reject) => {
+				timeoutId = setTimeout(() => {
+					reject(new Error(`Review execution timed out after ${timeoutMs}ms.`));
+				}, timeoutMs);
+				timeoutId.unref?.();
+			}),
+		]);
+	} finally {
+		if (timeoutId) {
+			clearTimeout(timeoutId);
+		}
+	}
+}
+
 async function collectGeneratedFiles(
 	repoPath: string,
 	changedFilesMap: Record<string, string>,
@@ -304,6 +331,14 @@ function describeReviewFailure(error: unknown): string[] {
 				: []),
 			'What this does and does not mean: the client only knows that no response completed before the deadline. It cannot determine from the timeout alone whether the delay was caused by model latency, OpenCode server load, provider slowdown, or a stuck request.',
 			'Recommended actions: reduce batch size or max diff chars, increase batch timeout, or inspect provider/server latency.',
+		];
+	}
+
+	if (message.includes('Review execution timed out after')) {
+		return [
+			'Review failure category: total timeout.',
+			'Likely cause: the review execution did not finish before the configured total timeout elapsed.',
+			'Recommended actions: inspect OpenCode/model latency and stuck request logs; the OpenCode server will be closed during cleanup.',
 		];
 	}
 

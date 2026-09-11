@@ -182,14 +182,17 @@ async function collectReviewIssues(
 		const prompt = buildReviewPrompt(input);
 		const batchDetails = buildBatchTimeoutDetails(client, input);
 		return await withBatchTimeout(
-			promptReviewIssues(
-				client,
-				sessionId,
-				prompt,
-				resolvedAgent,
-				input.structuredOutputRetryCount,
-			),
+			signal =>
+				promptReviewIssues(
+					client,
+					sessionId,
+					prompt,
+					resolvedAgent,
+					input.structuredOutputRetryCount,
+					signal,
+				),
 			batchDetails,
+			() => abortTimedOutSession(client, sessionId),
 		);
 	} catch (error) {
 		if (
@@ -234,17 +237,29 @@ async function collectReviewIssues(
 }
 
 async function withBatchTimeout<T>(
-	promise: Promise<T>,
+	operation: (signal: AbortSignal) => Promise<T>,
 	details: ReviewBatchTimeoutDetails,
+	onTimeout: () => void,
 ): Promise<T> {
 	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const controller = new AbortController();
+	const timeoutError = new ReviewBatchTimeoutError(details);
+	const promise = operation(controller.signal).catch(error => {
+		if (controller.signal.aborted) {
+			throw timeoutError;
+		}
+
+		throw error;
+	});
 
 	try {
 		return await Promise.race([
 			promise,
 			new Promise<T>((_, reject) => {
 				timeoutId = setTimeout(() => {
-					reject(new ReviewBatchTimeoutError(details));
+					controller.abort();
+					onTimeout();
+					reject(timeoutError);
 				}, details.timeoutMs);
 			}),
 		]);
@@ -253,6 +268,19 @@ async function withBatchTimeout<T>(
 			clearTimeout(timeoutId);
 		}
 	}
+}
+
+function abortTimedOutSession(
+	client: OpencodeSessionClient,
+	sessionId: string,
+): void {
+	void client
+		.abortSession(sessionId, AbortSignal.timeout(5000))
+		.catch(error => {
+			logger.warn(
+				`Could not abort timed out OpenCode session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		});
 }
 
 function buildBatchTimeoutDetails(
@@ -321,6 +349,7 @@ async function promptReviewIssues(
 	prompt: string,
 	resolvedAgent: ResolvedReviewAgent,
 	structuredOutputRetryCount: number,
+	signal: AbortSignal,
 ): Promise<unknown> {
 	try {
 		return await client.promptStructured(sessionId, {
@@ -329,6 +358,7 @@ async function promptReviewIssues(
 			prompt,
 			schema: reviewIssuesEnvelopeJsonSchema,
 			retryCount: structuredOutputRetryCount,
+			signal,
 		});
 	} catch (error) {
 		if (!resolvedAgent.discoveryFailed || !isMissingAgentError(error)) {
@@ -341,6 +371,7 @@ async function promptReviewIssues(
 			prompt,
 			schema: reviewIssuesEnvelopeJsonSchema,
 			retryCount: structuredOutputRetryCount,
+			signal,
 		});
 	}
 }

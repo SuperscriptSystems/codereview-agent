@@ -86,6 +86,7 @@ function buildReviewConfig(overrides?: Record<string, unknown>) {
 		customRules: ['Project rule'],
 		failOpen: false,
 		batchTimeoutMs: 120000,
+		totalTimeoutMs: 1800000,
 		structuredOutputRetryCount: 10,
 		testKeywords: ['test', 'spec'],
 		batching: {
@@ -687,6 +688,43 @@ describe('review command', () => {
 				],
 			},
 		);
+	});
+
+	it('fails open when the total review timeout elapses', async () => {
+		vi.useFakeTimers();
+		parseConfigMock.mockReturnValue({
+			review: buildReviewConfig({ failOpen: true, totalTimeoutMs: 20 }),
+		});
+		process.env.BITBUCKET_PR_ID = '7';
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/app.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit');
+		runReviewMock.mockReturnValue(
+			new Promise(() => {
+				// Intentionally never resolves.
+			}),
+		);
+
+		const promise = runReviewCommand({
+			repoPath: '/repo',
+			baseRef: 'main',
+			headRef: 'HEAD',
+			staged: false,
+			focus: undefined,
+			trace: false,
+		});
+
+		await vi.advanceTimersByTimeAsync(20);
+		await expect(promise).resolves.toBeUndefined();
+		vi.useRealTimers();
+
+		expect(loggerFns.warn).toHaveBeenCalledWith(
+			'Review failure category: total timeout.',
+		);
+		expect(approveBitbucketPullRequestMock).toHaveBeenCalledTimes(1);
+		expect(sessionClient.close).toHaveBeenCalled();
 	});
 
 	it('does not depend on legacy context expansion imports in the primary path', async () => {

@@ -4,6 +4,7 @@
 	"customRules": [],
 	"failOpen": true,
 	"batchTimeoutMs": 600000,
+	"totalTimeoutMs": 1800000,
 	"structuredOutputRetryCount": 4,
 	"batching": {
 		"enabled": true,

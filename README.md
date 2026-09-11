@@ -103,7 +103,7 @@ pipelines:
               docker run \
               --volume ${BITBUCKET_CLONE_DIR}:/repo \
               --workdir /repo \
-              --env LLM_API_KEY=$LLM_API_KEY \
+              --env OPENAI_API_KEY=$OPENAI_API_KEY \
               --env BITBUCKET_ACCESS_TOKEN=$BITBUCKET_ACCESS_TOKEN \
               --env BITBUCKET_TOKEN=$BITBUCKET_TOKEN \
               --env BITBUCKET_USER_EMAIL=$BITBUCKET_USER_EMAIL \
@@ -140,7 +140,7 @@ jobs:
           docker run \
             --volume ${{ github.workspace }}:/repo \
             --workdir /repo \
-            --env LLM_API_KEY=${{ secrets.LLM_API_KEY }} \
+            --env OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
             umykhailo/codereviewagent:latest \
             review --repo-path . --base-ref origin/main --head-ref ${{ github.sha }}
 ```

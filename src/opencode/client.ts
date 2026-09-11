@@ -17,7 +17,12 @@ export interface OpencodeSessionClient {
 	listAgents(): Promise<string[]>;
 	promptText(
 		sessionId: string,
-		options: { agent: string; system?: string; prompt: string },
+		options: {
+			agent: string;
+			system?: string;
+			prompt: string;
+			signal?: AbortSignal;
+		},
 	): Promise<string>;
 	promptStructured<T>(
 		sessionId: string,
@@ -27,8 +32,10 @@ export interface OpencodeSessionClient {
 			prompt: string;
 			schema: Record<string, unknown>;
 			retryCount?: number;
+			signal?: AbortSignal;
 		},
 	): Promise<T>;
+	abortSession(sessionId: string, signal?: AbortSignal): Promise<void>;
 	getDiagnostics(): { recentServerOutput: string };
 	close(): Promise<void>;
 }
@@ -89,13 +96,19 @@ export async function createSessionClient(
 		},
 		async promptText(
 			sessionId: string,
-			options: { agent: string; system?: string; prompt: string },
+			options: {
+				agent: string;
+				system?: string;
+				prompt: string;
+				signal?: AbortSignal;
+			},
 		): Promise<string> {
 			const response = await withTransportRetry<
 				Awaited<ReturnType<typeof client.session.prompt>>
 			>(() =>
 				client.session.prompt({
 					path: { id: sessionId },
+					signal: options.signal,
 					body: {
 						agent: options.agent,
 						system: options.system,
@@ -127,6 +140,7 @@ export async function createSessionClient(
 				prompt: string;
 				schema: Record<string, unknown>;
 				retryCount?: number;
+				signal?: AbortSignal;
 			},
 		): Promise<T> {
 			// The OpenCode server accepts `format` for structured output, but the SDK type here lags behind the API.
@@ -135,6 +149,7 @@ export async function createSessionClient(
 			>(() =>
 				client.session.prompt({
 					path: { id: sessionId },
+					signal: options.signal,
 					body: {
 						agent: options.agent,
 						system: options.system,
@@ -212,6 +227,14 @@ export async function createSessionClient(
 		async close(): Promise<void> {
 			await server.close();
 		},
+		async abortSession(sessionId: string, signal?: AbortSignal): Promise<void> {
+			await withTransportRetry(() =>
+				client.session.abort({
+					path: { id: sessionId },
+					signal,
+				}),
+			);
+		},
 		getDiagnostics(): { recentServerOutput: string } {
 			return { recentServerOutput: server.getRecentOutput() };
 		},
@@ -227,6 +250,7 @@ async function promptStructuredViaTextFallback<T>(
 		system?: string;
 		prompt: string;
 		schema: Record<string, unknown>;
+		signal?: AbortSignal;
 	},
 ): Promise<T | null> {
 	const startedAt = Date.now();
@@ -238,6 +262,7 @@ async function promptStructuredViaTextFallback<T>(
 	>(() =>
 		client.session.prompt({
 			path: { id: sessionId },
+			signal: options.signal,
 			body: {
 				agent: options.agent,
 				system: options.system,
@@ -294,7 +319,11 @@ async function extractStructuredPayloadFromSession<T>(
 ): Promise<T | null> {
 	try {
 		let latestResponse: unknown;
-		for (let attempt = 1; attempt <= structuredSessionPollAttempts; attempt += 1) {
+		for (
+			let attempt = 1;
+			attempt <= structuredSessionPollAttempts;
+			attempt += 1
+		) {
 			latestResponse = await getSessionMessages(client, baseUrl, sessionId);
 			const payload = extractStructuredPayloadFromSessionMessages<T>(
 				latestResponse,
@@ -330,11 +359,10 @@ async function getSessionMessages(
 ): Promise<unknown> {
 	const sdkResponse = await withTransportRetry<
 		Awaited<ReturnType<typeof client.session.messages>>
-	>(
-		() =>
-			client.session.messages({
-				path: { id: sessionId },
-			} as Parameters<typeof client.session.messages>[0]),
+	>(() =>
+		client.session.messages({
+			path: { id: sessionId },
+		} as Parameters<typeof client.session.messages>[0]),
 	);
 
 	if (getResponseData<unknown>(sdkResponse) !== undefined) {
@@ -874,16 +902,14 @@ function describeSessionMessages(response: unknown): string {
 		.join(', ');
 }
 
-function getLatestAssistantMessageState(response: unknown):
-	| {
-			completed: boolean;
-			finish?: string;
-			errorName?: string;
-			hasStructured: boolean;
-			textLength: number;
-			textPreview: string;
-	  }
-	| null {
+function getLatestAssistantMessageState(response: unknown): {
+	completed: boolean;
+	finish?: string;
+	errorName?: string;
+	hasStructured: boolean;
+	textLength: number;
+	textPreview: string;
+} | null {
 	const messages = getSessionMessageEntries(response);
 	return messages ? getLatestAssistantMessageStateFromEntries(messages) : null;
 }
@@ -931,7 +957,9 @@ type SessionMessageEntry = {
 	parts?: Array<{ type: string; text?: string }>;
 };
 
-function getSessionMessageEntries(response: unknown): SessionMessageEntry[] | null {
+function getSessionMessageEntries(
+	response: unknown,
+): SessionMessageEntry[] | null {
 	const messages = getResponseData<SessionMessageEntry[]>(response);
 	return Array.isArray(messages) ? messages : null;
 }

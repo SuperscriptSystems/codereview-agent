@@ -24,7 +24,7 @@ jobs:
           docker run \
             --volume ${{ github.workspace }}:/repo \
             --workdir /repo \
-            --env LLM_API_KEY=${{ secrets.LLM_API_KEY }} \
+            --env OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
             --env GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             --env GITHUB_PR_NUMBER=${{ github.event.pull_request.number }} \
             --env GITHUB_REPOSITORY=${{ github.repository }} \

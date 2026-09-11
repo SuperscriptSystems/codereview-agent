@@ -95,6 +95,7 @@ export const reviewConfigSchema = z.object({
 	customRules: z.array(z.string()).default([]),
 	failOpen: z.boolean().default(true),
 	batchTimeoutMs: z.number().int().positive().default(90000),
+	totalTimeoutMs: z.number().int().positive().default(1800000),
 	structuredOutputRetryCount: z.number().int().positive().default(4),
 	testKeywords: z.array(z.string()).default(['test', 'spec']),
 	batching: batchingConfigSchema.default({
@@ -149,6 +150,7 @@ export const opencodeConfigSchema = z.object({
 		customRules: [],
 		failOpen: true,
 		batchTimeoutMs: 600000,
+		totalTimeoutMs: 1800000,
 		structuredOutputRetryCount: 4,
 		testKeywords: ['test', 'spec'],
 		batching: {

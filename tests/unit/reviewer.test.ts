@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
 	buildReviewBatches,
@@ -73,6 +73,7 @@ describe('reviewer', () => {
 					],
 				}) as unknown as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -105,6 +106,7 @@ describe('reviewer', () => {
 				return { issues: [] } as unknown as T;
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -120,6 +122,7 @@ describe('reviewer', () => {
 			promptText: async () => '',
 			promptStructured: async <T>() => ({ issues: [] }) as unknown as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -149,6 +152,7 @@ describe('reviewer', () => {
 			promptText: async () => '',
 			promptStructured,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -174,6 +178,7 @@ describe('reviewer', () => {
 					],
 				}) as unknown as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -233,6 +238,7 @@ describe('reviewer', () => {
 				} as unknown as T;
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -263,17 +269,22 @@ describe('reviewer', () => {
 	});
 
 	it('times out a single review batch', async () => {
+		const abortSession = vi.fn(async () => {});
+		let promptSignal: AbortSignal | undefined;
 		const client = {
 			listAgents: async () => ['reviewer', 'general'],
 			createSession: async () => 'session-1',
 			promptText: async () => '',
-			promptStructured: async <T>() =>
-				await new Promise<T>(() => {
+			promptStructured: async <T>(_sessionId: string, options: any) => {
+				promptSignal = options.signal;
+				return await new Promise<T>(() => {
 					// Intentionally never resolves.
-				}),
+				});
+			},
 			getDiagnostics: () => ({
 				recentServerOutput: 'opencode request still running',
 			}),
+			abortSession,
 			close: async () => {},
 		};
 
@@ -283,6 +294,11 @@ describe('reviewer', () => {
 				batchTimeoutMs: 20,
 			}),
 		).rejects.toThrow('Review batch timed out after 20ms (1 files).');
+		expect(promptSignal?.aborted).toBe(true);
+		expect(abortSession).toHaveBeenCalledWith(
+			'session-1',
+			expect.any(AbortSignal),
+		);
 	});
 
 	it('skips a failed batch and continues when fail-open is enabled', async () => {
@@ -325,6 +341,7 @@ describe('reviewer', () => {
 				} as unknown as T;
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -376,6 +393,7 @@ describe('reviewer', () => {
 				throw new Error('OpenCode did not return a structured output payload.');
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
@@ -473,6 +491,7 @@ describe('reviewer', () => {
 				} as unknown as T;
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: async () => {},
 			close: async () => {},
 		};
 
