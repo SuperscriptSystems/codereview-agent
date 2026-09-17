@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -11,6 +11,8 @@ const transportRetryAttempts = 3;
 const transportRetryBaseDelayMs = 500;
 const structuredSessionPollAttempts = 12;
 const structuredSessionPollDelayMs = 500;
+const serverStartupTimeoutMs = 30_000;
+const serverStartupPollDelayMs = 100;
 
 export interface OpencodeSessionClient {
 	createSession(title: string): Promise<string>;
@@ -444,7 +446,6 @@ async function startIsolatedOpencodeServer(
 		},
 	);
 
-	let settled = false;
 	let output = '';
 	const recentOutputLines: string[] = [];
 	const appendRecentOutput = (chunk: string): void => {
@@ -460,75 +461,27 @@ async function startIsolatedOpencodeServer(
 			}
 		}
 	};
-	const url = await new Promise<string>((resolve, reject) => {
-		const timeoutId = setTimeout(() => {
-			proc.kill();
-			reject(
-				new Error(
-					`Timeout waiting for OpenCode server startup on port ${port}`,
-				),
-			);
-		}, 5000);
-
-		proc.stdout?.on('data', chunk => {
-			appendRecentOutput(chunk.toString());
-			if (settled) {
-				return;
-			}
-
-			output += chunk.toString();
-			const lines = output.split('\n');
-			for (const line of lines) {
-				if (!line.startsWith('opencode server listening')) {
-					continue;
-				}
-
-				const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-				if (!match) {
-					settled = true;
-					clearTimeout(timeoutId);
-					proc.kill();
-					reject(
-						new Error(
-							`Failed to parse OpenCode server URL from output: ${line}`,
-						),
-					);
-					return;
-				}
-
-				settled = true;
-				clearTimeout(timeoutId);
-				resolve(match[1]);
-				return;
-			}
-		});
-
-		proc.stderr?.on('data', chunk => {
-			appendRecentOutput(chunk.toString());
-			output += chunk.toString();
-		});
-
-		proc.on('error', error => {
-			if (settled) {
-				return;
-			}
-
-			settled = true;
-			clearTimeout(timeoutId);
-			reject(error);
-		});
-
-		proc.on('exit', code => {
-			if (settled) {
-				return;
-			}
-
-			settled = true;
-			clearTimeout(timeoutId);
-			const details = output.trim() ? `\nServer output: ${output}` : '';
-			reject(new Error(`Server exited with code ${code}${details}`));
-		});
+	proc.stdout?.on('data', chunk => {
+		const text = chunk.toString();
+		appendRecentOutput(text);
+		output += text;
 	});
+
+	proc.stderr?.on('data', chunk => {
+		const text = chunk.toString();
+		appendRecentOutput(text);
+		output += text;
+	});
+
+	let url: string;
+	try {
+		await waitForServerPort(proc, port, () => output);
+		url = `http://127.0.0.1:${port}`;
+	} catch (error) {
+		await shutdownChildProcess(proc);
+		await rm(cwd, { recursive: true, force: true });
+		throw error;
+	}
 
 	return {
 		url,
@@ -540,6 +493,95 @@ async function startIsolatedOpencodeServer(
 			await rm(cwd, { recursive: true, force: true });
 		},
 	};
+}
+
+async function waitForServerPort(
+	proc: ReturnType<typeof spawn>,
+	port: number,
+	getOutput: () => string,
+): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		let settled = false;
+		let pollTimer: NodeJS.Timeout | undefined;
+		let timeoutTimer: NodeJS.Timeout | undefined;
+		const finish = (error?: Error): void => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			if (timeoutTimer) {
+				clearTimeout(timeoutTimer);
+			}
+			if (pollTimer) {
+				clearTimeout(pollTimer);
+			}
+
+			if (error) {
+				reject(error);
+			} else {
+				resolve();
+			}
+		};
+		timeoutTimer = setTimeout(() => {
+			finish(
+				new Error(
+					`Timeout waiting for OpenCode server startup on port ${port}${formatServerOutput(getOutput())}`,
+				),
+			);
+		}, serverStartupTimeoutMs);
+		const poll = async (): Promise<void> => {
+			if (settled) {
+				return;
+			}
+
+			const connected = await canConnectToPort(port);
+			if (settled) {
+				return;
+			}
+
+			if (connected) {
+				finish();
+				return;
+			}
+
+			pollTimer = setTimeout(poll, serverStartupPollDelayMs);
+		};
+
+		proc.once('error', error => finish(error));
+		proc.once('exit', code => {
+			finish(
+				new Error(
+					`OpenCode server exited with code ${code}${formatServerOutput(getOutput())}`,
+				),
+			);
+		});
+		void poll();
+	});
+}
+
+async function canConnectToPort(port: number): Promise<boolean> {
+	return await new Promise(resolve => {
+		const socket = createConnection({ host: '127.0.0.1', port });
+		let settled = false;
+		const finish = (connected: boolean): void => {
+			if (settled) {
+				return;
+			}
+
+			settled = true;
+			socket.destroy();
+			resolve(connected);
+		};
+
+		socket.once('connect', () => finish(true));
+		socket.once('error', () => finish(false));
+	});
+}
+
+function formatServerOutput(output: string): string {
+	const trimmed = output.trim();
+	return trimmed ? `\nServer output:\n${trimmed}` : '';
 }
 
 async function withTransportRetry<T>(operation: () => Promise<T>): Promise<T> {
