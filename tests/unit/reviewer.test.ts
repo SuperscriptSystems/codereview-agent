@@ -187,6 +187,7 @@ describe('reviewer', () => {
 
 	it('retries in smaller batches when a larger structured review response fails', async () => {
 		const promptStructuredCalls: string[] = [];
+		const deleteSession = vi.fn(async () => {});
 		const batchedInput: RunReviewInput = {
 			...input,
 			changedFilesMap: {
@@ -239,6 +240,7 @@ describe('reviewer', () => {
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession,
 			close: async () => {},
 		};
 
@@ -266,6 +268,7 @@ describe('reviewer', () => {
 		});
 
 		expect(promptStructuredCalls).toHaveLength(3);
+		expect(deleteSession).toHaveBeenCalledTimes(3);
 	});
 
 	it('times out a single review batch', async () => {
@@ -532,7 +535,7 @@ describe('reviewer', () => {
 		expect(callOrder).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
 	});
 
-	it('caps review batches to the configured maximum', () => {
+	it('keeps the configured file limit when more batches are needed', () => {
 		const batches = buildReviewBatches(
 			{
 				'src/1.ts': '1',
@@ -549,10 +552,12 @@ describe('reviewer', () => {
 			},
 		);
 
-		expect(batches).toHaveLength(4);
+		expect(batches).toHaveLength(6);
 		expect(batches).toEqual([
-			{ 'src/1.ts': '1', 'src/2.ts': '2' },
-			{ 'src/3.ts': '3', 'src/4.ts': '4' },
+			{ 'src/1.ts': '1' },
+			{ 'src/2.ts': '2' },
+			{ 'src/3.ts': '3' },
+			{ 'src/4.ts': '4' },
 			{ 'src/5.ts': '5' },
 			{ 'src/6.ts': '6' },
 		]);

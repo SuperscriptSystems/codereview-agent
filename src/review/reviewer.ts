@@ -205,6 +205,8 @@ async function collectReviewIssues(
 		logger.warn(
 			`Structured review failed for ${Object.keys(input.changedFilesMap).length} files. Retrying in smaller batches.`,
 		);
+	} finally {
+		await deleteCompletedSession(client, sessionId);
 	}
 
 	const [leftChangedFilesMap, rightChangedFilesMap] = splitChangedFilesMap(
@@ -281,6 +283,23 @@ function abortTimedOutSession(
 				`Could not abort timed out OpenCode session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		});
+}
+
+async function deleteCompletedSession(
+	client: OpencodeSessionClient,
+	sessionId: string,
+): Promise<void> {
+	if (typeof client.deleteSession !== 'function') {
+		return;
+	}
+
+	try {
+		await client.deleteSession(sessionId);
+	} catch (error) {
+		logger.warn(
+			`Could not delete completed OpenCode session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
 }
 
 function buildBatchTimeoutDetails(
@@ -428,33 +447,7 @@ export function buildReviewBatches(
 		batches.push(Object.fromEntries(currentBatch));
 	}
 
-	return capBatchCount(batches, batching.maxBatches);
-}
-
-function capBatchCount(
-	batches: ChangedFileMap[],
-	maxBatches: number,
-): ChangedFileMap[] {
-	if (batches.length <= maxBatches) {
-		return batches;
-	}
-
-	const entries = batches.flatMap(batch => Object.entries(batch));
-	const targetBatchCount = Math.min(maxBatches, entries.length);
-	const cappedBatches: ChangedFileMap[] = [];
-	let startIndex = 0;
-
-	for (let batchIndex = 0; batchIndex < targetBatchCount; batchIndex += 1) {
-		const remainingEntries = entries.length - startIndex;
-		const remainingBatches = targetBatchCount - batchIndex;
-		const batchSize = Math.ceil(remainingEntries / remainingBatches);
-		cappedBatches.push(
-			Object.fromEntries(entries.slice(startIndex, startIndex + batchSize)),
-		);
-		startIndex += batchSize;
-	}
-
-	return cappedBatches;
+	return batches;
 }
 
 export function buildReviewPrompt(input: RunReviewInput): string {

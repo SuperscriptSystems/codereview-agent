@@ -38,6 +38,7 @@ export interface OpencodeSessionClient {
 		},
 	): Promise<T>;
 	abortSession(sessionId: string, signal?: AbortSignal): Promise<void>;
+	deleteSession(sessionId: string): Promise<void>;
 	getDiagnostics(): { recentServerOutput: string };
 	close(): Promise<void>;
 }
@@ -234,6 +235,13 @@ export async function createSessionClient(
 				client.session.abort({
 					path: { id: sessionId },
 					signal,
+				}),
+			);
+		},
+		async deleteSession(sessionId: string): Promise<void> {
+			await withTransportRetry(() =>
+				client.session.delete({
+					path: { id: sessionId },
 				}),
 			);
 		},
@@ -434,7 +442,7 @@ async function startIsolatedOpencodeServer(
 	const cwd = await mkdtemp(path.join(tmpdir(), 'code-review-agent-opencode-'));
 	const proc = spawn(
 		'opencode',
-		['serve', `--hostname=127.0.0.1`, `--port=${port}`],
+		['serve', '--pure', `--hostname=127.0.0.1`, `--port=${port}`],
 		{
 			cwd,
 			env: {

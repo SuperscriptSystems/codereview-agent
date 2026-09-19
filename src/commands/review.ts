@@ -178,8 +178,8 @@ export async function runReviewCommand(
 		`Structured output retry count: ${config.review.structuredOutputRetryCount}`,
 	);
 
-	const sessionClient = await createSessionClient(rawConfig, repoPath);
 	const jiraDetails = await buildJiraContext(repoPath, commitMessages);
+	const sessionClient = await createSessionClient(rawConfig, repoPath);
 
 	try {
 		const reviewResults = await withTotalReviewTimeout(
