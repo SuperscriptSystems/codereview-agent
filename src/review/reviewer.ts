@@ -447,7 +447,32 @@ export function buildReviewBatches(
 		batches.push(Object.fromEntries(currentBatch));
 	}
 
-	return batches;
+	return capBatchCount(batches, batching.maxBatches);
+}
+
+function capBatchCount(
+	batches: ChangedFileMap[],
+	maxBatches: number,
+): ChangedFileMap[] {
+	if (batches.length <= maxBatches) {
+		return batches;
+	}
+
+	const entries = batches.flatMap(batch => Object.entries(batch));
+	const cappedBatches: ChangedFileMap[] = [];
+	let startIndex = 0;
+
+	for (let batchIndex = 0; batchIndex < maxBatches; batchIndex += 1) {
+		const remainingEntries = entries.length - startIndex;
+		const remainingBatches = maxBatches - batchIndex;
+		const batchSize = Math.ceil(remainingEntries / remainingBatches);
+		cappedBatches.push(
+			Object.fromEntries(entries.slice(startIndex, startIndex + batchSize)),
+		);
+		startIndex += batchSize;
+	}
+
+	return cappedBatches;
 }
 
 export function buildReviewPrompt(input: RunReviewInput): string {

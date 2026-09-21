@@ -535,7 +535,7 @@ describe('reviewer', () => {
 		expect(callOrder).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
 	});
 
-	it('keeps the configured file limit when more batches are needed', () => {
+	it('caps review batches to the configured maximum', () => {
 		const batches = buildReviewBatches(
 			{
 				'src/1.ts': '1',
@@ -552,14 +552,32 @@ describe('reviewer', () => {
 			},
 		);
 
-		expect(batches).toHaveLength(6);
+		expect(batches).toHaveLength(4);
 		expect(batches).toEqual([
-			{ 'src/1.ts': '1' },
-			{ 'src/2.ts': '2' },
-			{ 'src/3.ts': '3' },
-			{ 'src/4.ts': '4' },
+			{ 'src/1.ts': '1', 'src/2.ts': '2' },
+			{ 'src/3.ts': '3', 'src/4.ts': '4' },
 			{ 'src/5.ts': '5' },
 			{ 'src/6.ts': '6' },
+		]);
+	});
+
+	it('distributes files evenly across the maximum batch count', () => {
+		const changedFilesMap = Object.fromEntries(
+			Array.from({ length: 17 }, (_, index) => [
+				`src/${index + 1}.ts`,
+				String(index + 1),
+			]),
+		);
+
+		const batches = buildReviewBatches(changedFilesMap, {
+			enabled: true,
+			maxBatches: 4,
+			maxFilesPerBatch: 4,
+		});
+
+		expect(batches).toHaveLength(4);
+		expect(batches.map(batch => Object.keys(batch).length)).toEqual([
+			5, 4, 4, 4,
 		]);
 	});
 
