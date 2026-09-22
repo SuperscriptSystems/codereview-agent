@@ -8,7 +8,7 @@ RUN npm install -g opencode-ai@1.14.48
 
 WORKDIR /app
 
-COPY package.json package-lock.json tsconfig.json opencode.json review-config.json ./
+COPY package.json package-lock.json tsconfig.json reviewer-opencode.json review-config.json ./
 COPY src ./src
 COPY prompts ./prompts
 
