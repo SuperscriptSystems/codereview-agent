@@ -445,12 +445,7 @@ async function startIsolatedOpencodeServer(
 		['serve', '--pure', `--hostname=127.0.0.1`, `--port=${port}`],
 		{
 			cwd,
-			env: {
-				...process.env,
-				OPENCODE_SERVER_PASSWORD: '',
-				OPENCODE_SERVER_USERNAME: '',
-				OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-			},
+			env: buildOpencodeServerEnv(process.env, config),
 		},
 	);
 
@@ -500,6 +495,19 @@ async function startIsolatedOpencodeServer(
 			await shutdownChildProcess(proc);
 			await rm(cwd, { recursive: true, force: true });
 		},
+	};
+}
+
+function buildOpencodeServerEnv(
+	baseEnv: NodeJS.ProcessEnv,
+	config: Record<string, unknown>,
+): NodeJS.ProcessEnv {
+	return {
+		...baseEnv,
+		OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+		OPENCODE_SERVER_PASSWORD: '',
+		OPENCODE_SERVER_USERNAME: '',
+		OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
 	};
 }
 
@@ -1256,4 +1264,5 @@ export const __test__ = {
 	extractNoIssuesPayloadFromText,
 	describeSessionMessages,
 	extractPromptText,
+	buildOpencodeServerEnv,
 };

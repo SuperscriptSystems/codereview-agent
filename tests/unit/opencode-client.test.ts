@@ -267,4 +267,21 @@ describe('opencode client structured output extraction', () => {
 			__test__.isRetryableTransportError(new Error('schema validation failed')),
 		).toBe(false);
 	});
+
+	it('starts opencode server with project config disabled and explicit config content', () => {
+		const env = __test__.buildOpencodeServerEnv(
+			{ OPENAI_API_KEY: 'test-key' },
+			{ model: 'openai/reviewer-model' },
+		);
+
+		expect(env).toMatchObject({
+			OPENAI_API_KEY: 'test-key',
+			OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+			OPENCODE_SERVER_PASSWORD: '',
+			OPENCODE_SERVER_USERNAME: '',
+			OPENCODE_CONFIG_CONTENT: JSON.stringify({
+				model: 'openai/reviewer-model',
+			}),
+		});
+	});
 });

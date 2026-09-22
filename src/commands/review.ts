@@ -16,6 +16,7 @@ import {
 	shouldIgnorePath,
 } from '../git/filtering.js';
 import { parseChangedFilesFromDiff } from '../git/parse.js';
+import { getReviewerInstructions } from '../git/reviewer-instructions.js';
 import {
 	approvePullRequest as approveBitbucketPullRequest,
 	cleanupAndPostAllComments,
@@ -178,6 +179,17 @@ export async function runReviewCommand(
 		`Structured output retry count: ${config.review.structuredOutputRetryCount}`,
 	);
 
+	const instructionsRef = options.staged ? 'HEAD' : options.baseRef;
+	const repositoryInstructions = await getReviewerInstructions(
+		repoPath,
+		instructionsRef,
+	);
+	logger.info(
+		repositoryInstructions
+			? `Repository review instructions: loaded from ${instructionsRef}`
+			: `Repository review instructions: not found at ${instructionsRef}`,
+	);
+
 	const jiraDetails = await buildJiraContext(repoPath, commitMessages);
 	const sessionClient = await createSessionClient(rawConfig, repoPath);
 
@@ -192,6 +204,7 @@ export async function runReviewCommand(
 				commitMessages,
 				jiraDetails,
 				reviewRules: config.review.customRules,
+				repositoryInstructions,
 				focusAreas,
 				failOpen: config.review.failOpen,
 				batching: config.review.batching,

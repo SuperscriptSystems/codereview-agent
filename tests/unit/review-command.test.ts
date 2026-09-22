@@ -5,6 +5,7 @@ const parseConfigMock = vi.fn();
 const getDiffMock = vi.fn();
 const getCommitMessagesMock = vi.fn();
 const getStagedDiffContentMock = vi.fn();
+const getReviewerInstructionsMock = vi.fn();
 const filterTestFilesMock = vi.fn();
 const isGeneratedFileMock = vi.fn();
 const isFrontendNoiseFileMock = vi.fn();
@@ -29,6 +30,10 @@ vi.mock('../../src/git/diff.js', () => ({
 	getDiff: getDiffMock,
 	getCommitMessages: getCommitMessagesMock,
 	getStagedDiffContent: getStagedDiffContentMock,
+}));
+
+vi.mock('../../src/git/reviewer-instructions.js', () => ({
+	getReviewerInstructions: getReviewerInstructionsMock,
 }));
 
 vi.mock('../../src/git/filtering.js', () => ({
@@ -153,6 +158,7 @@ describe('review command', () => {
 		buildReviewBatchesMock.mockImplementation(value => [value]);
 		createSessionClientMock.mockResolvedValue(sessionClient);
 		buildJiraContextMock.mockResolvedValue('');
+		getReviewerInstructionsMock.mockResolvedValue(undefined);
 		runReviewMock.mockResolvedValue({});
 
 		delete process.env.GITHUB_ACTIONS;
@@ -195,6 +201,7 @@ describe('review command', () => {
 			commitMessages: 'Reviewing staged files before commit.',
 			jiraDetails: '',
 			reviewRules: ['Project rule'],
+			repositoryInstructions: undefined,
 			focusAreas: ['LogicError', 'Security'],
 			failOpen: false,
 			batching: {
@@ -205,6 +212,7 @@ describe('review command', () => {
 			batchTimeoutMs: 120000,
 			structuredOutputRetryCount: 10,
 		});
+		expect(getReviewerInstructionsMock).toHaveBeenCalledWith('/repo', 'HEAD');
 		expect(sessionClient.close).toHaveBeenCalled();
 	});
 
@@ -240,6 +248,36 @@ describe('review command', () => {
 		expect(buildJiraContextMock).toHaveBeenCalledWith(
 			'/repo',
 			'commit one\n\ncommit two',
+		);
+		expect(getReviewerInstructionsMock).toHaveBeenCalledWith('/repo', 'main');
+	});
+
+	it('passes trusted base instructions into range reviews', async () => {
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/range.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit one');
+		getReviewerInstructionsMock.mockResolvedValue('# Business rules');
+
+		await runReviewCommand({
+			repoPath: '/repo',
+			baseRef: 'origin/main',
+			headRef: 'feature',
+			staged: false,
+			focus: undefined,
+			trace: false,
+		});
+
+		expect(runReviewMock).toHaveBeenCalledWith(
+			sessionClient,
+			expect.objectContaining({
+				repositoryInstructions: '# Business rules',
+			}),
+		);
+		expect(getReviewerInstructionsMock).toHaveBeenCalledWith(
+			'/repo',
+			'origin/main',
 		);
 	});
 

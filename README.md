@@ -10,7 +10,7 @@ AI-powered, context-aware code review tooling for local repositories and pull re
 The active implementation is the root TypeScript reviewer.
 
 - Source code lives in `src/`
-- OpenCode runtime config is always loaded from the bundled `opencode.json`
+- OpenCode runtime config is always loaded from the bundled `reviewer-opencode.json`
 - Reviewer-specific settings live in `review-config.json`
 - `.codereview.yml` is kept only as temporary legacy migration reference
 
@@ -51,9 +51,11 @@ npm run assess -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 
 ## Configuration
 
-OpenCode runtime settings always come from the bundled `opencode.json`.
+OpenCode runtime settings always come from the bundled `reviewer-opencode.json`.
 
 Reviewer-specific settings live in repo-local `review-config.json` when present, with bundled fallback defaults.
+
+Repositories can provide additional review criteria in a root-level `reviewer-instructions.md`. Range and pull-request reviews load the file from the trusted base ref; staged reviews load it from `HEAD`. Missing or empty files leave the standard reviewer behavior unchanged. The file must be a regular file no larger than 64 KiB and cannot override review scope, tool restrictions, security requirements, or the structured output format.
 
 Key config fields:
 

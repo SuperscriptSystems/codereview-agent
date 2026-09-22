@@ -34,7 +34,10 @@ describe('loadRawConfig', () => {
 
 		await writeFile(
 			path.join(repoPath, 'opencode.json'),
-			JSON.stringify({ model: 'openai/should-not-be-used', instructions: ['repo-local.md'] }),
+			JSON.stringify({
+				model: 'openai/should-not-be-used',
+				instructions: ['repo-local.md'],
+			}),
 			'utf8',
 		);
 		await writeFile(
@@ -44,8 +47,12 @@ describe('loadRawConfig', () => {
 		);
 
 		const rawConfig = await loadRawConfig(repoPath);
-		const bundledConfigPath = fileURLToPath(new URL('../../opencode.json', import.meta.url));
-		const bundledConfig = JSON.parse(await readFile(bundledConfigPath, 'utf8')) as Record<string, unknown>;
+		const bundledConfigPath = fileURLToPath(
+			new URL('../../reviewer-opencode.json', import.meta.url),
+		);
+		const bundledConfig = JSON.parse(
+			await readFile(bundledConfigPath, 'utf8'),
+		) as Record<string, unknown>;
 
 		expect(rawConfig.model).toBe(bundledConfig.model);
 		expect(rawConfig).not.toMatchObject({
