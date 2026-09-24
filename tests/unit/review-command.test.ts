@@ -214,6 +214,9 @@ describe('review command', () => {
 		});
 		expect(getReviewerInstructionsMock).toHaveBeenCalledWith('/repo', 'HEAD');
 		expect(sessionClient.close).toHaveBeenCalled();
+		expect(loggerFns.info).toHaveBeenCalledWith(expect.stringMatching(/^Jira context started at .*Z\.$/));
+		expect(loggerFns.info).toHaveBeenCalledWith(expect.stringMatching(/^OpenCode review completed in \d+ms\.$/));
+		expect(loggerFns.info).toHaveBeenCalledWith(expect.stringMatching(/^OpenCode server shutdown completed in \d+ms\.$/));
 	});
 
 	it('passes range review inputs through the new runReview shape', async () => {

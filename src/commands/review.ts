@@ -54,9 +54,9 @@ export async function runReviewCommand(
 	const focusAreas = resolveFocusAreas(options.focus, config.review.focusAreas);
 	const filtering = config.review.filtering;
 
-	const { changedFilesMap, commitMessages } = await collectReviewInputs(
-		repoPath,
-		options,
+	const { changedFilesMap, commitMessages } = await timeReviewStage(
+		'Collect review inputs',
+		() => collectReviewInputs(repoPath, options),
 	);
 
 	if (Object.keys(changedFilesMap).length === 0) {
@@ -190,28 +190,34 @@ export async function runReviewCommand(
 			: `Repository review instructions: not found at ${instructionsRef}`,
 	);
 
-	const jiraDetails = await buildJiraContext(repoPath, commitMessages);
-	const sessionClient = await createSessionClient(rawConfig, repoPath);
+	const jiraDetails = await timeReviewStage('Jira context', () =>
+		buildJiraContext(repoPath, commitMessages),
+	);
+	const sessionClient = await timeReviewStage('OpenCode server startup', () =>
+		createSessionClient(rawConfig, repoPath),
+	);
 
 	try {
-		const reviewResults = await withTotalReviewTimeout(
-			runReview(sessionClient, {
-				repoPath,
-				staged: options.staged,
-				baseRef: options.baseRef,
-				headRef: options.headRef,
-				changedFilesMap: filteredChangedFilesMap,
-				commitMessages,
-				jiraDetails,
-				reviewRules: config.review.customRules,
-				repositoryInstructions,
-				focusAreas,
-				failOpen: config.review.failOpen,
-				batching: config.review.batching,
-				batchTimeoutMs: config.review.batchTimeoutMs,
-				structuredOutputRetryCount: config.review.structuredOutputRetryCount,
-			}),
-			config.review.totalTimeoutMs,
+		const reviewResults = await timeReviewStage('OpenCode review', () =>
+			withTotalReviewTimeout(
+				runReview(sessionClient, {
+					repoPath,
+					staged: options.staged,
+					baseRef: options.baseRef,
+					headRef: options.headRef,
+					changedFilesMap: filteredChangedFilesMap,
+					commitMessages,
+					jiraDetails,
+					reviewRules: config.review.customRules,
+					repositoryInstructions,
+					focusAreas,
+					failOpen: config.review.failOpen,
+					batching: config.review.batching,
+					batchTimeoutMs: config.review.batchTimeoutMs,
+					structuredOutputRetryCount: config.review.structuredOutputRetryCount,
+				}),
+				config.review.totalTimeoutMs,
+			),
 		);
 
 		const issueCount = Object.values(reviewResults).reduce(
@@ -228,9 +234,13 @@ export async function runReviewCommand(
 		);
 
 		if (isGithubPr()) {
-			await handlePrResults(allIssues, filesWithIssues);
+			await timeReviewStage('GitHub PR publication', () =>
+				handlePrResults(allIssues, filesWithIssues),
+			);
 		} else if (isBitbucketPr()) {
-			await cleanupAndPostAllComments(allIssues, filesWithIssues);
+			await timeReviewStage('Bitbucket PR publication', () =>
+				cleanupAndPostAllComments(allIssues, filesWithIssues),
+			);
 		}
 
 		if (issueCount === 0) {
@@ -259,7 +269,10 @@ export async function runReviewCommand(
 		}
 
 		if (config.review.failOpen) {
-			await approvePullRequestIfPresent();
+			await timeReviewStage(
+				'PR approval after review failure',
+				approvePullRequestIfPresent,
+			);
 			logger.warn(
 				'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
 			);
@@ -268,7 +281,23 @@ export async function runReviewCommand(
 
 		throw error;
 	} finally {
-		await sessionClient.close();
+		await timeReviewStage('OpenCode server shutdown', () => sessionClient.close());
+	}
+}
+
+async function timeReviewStage<T>(
+	label: string,
+	operation: () => Promise<T>,
+): Promise<T> {
+	const startedAt = Date.now();
+	logger.info(`${label} started at ${new Date(startedAt).toISOString()}.`);
+	try {
+		const result = await operation();
+		logger.info(`${label} completed in ${Date.now() - startedAt}ms.`);
+		return result;
+	} catch (error) {
+		logger.warn(`${label} failed after ${Date.now() - startedAt}ms.`);
+		throw error;
 	}
 }
 

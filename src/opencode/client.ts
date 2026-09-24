@@ -164,6 +164,10 @@ export async function createSessionClient(
 						},
 					} as unknown as Parameters<typeof client.session.prompt>[0]['body'],
 				} as Parameters<typeof client.session.prompt>[0]),
+				{
+					label: 'OpenCode structured prompt',
+					getRecentServerOutput: server.getRecentOutput,
+				},
 			);
 
 			const info = getStructuredOutputInfo(response);
@@ -600,13 +604,26 @@ function formatServerOutput(output: string): string {
 	return trimmed ? `\nServer output:\n${trimmed}` : '';
 }
 
-async function withTransportRetry<T>(operation: () => Promise<T>): Promise<T> {
+async function withTransportRetry<T>(
+	operation: () => Promise<T>,
+	diagnostics?: { label: string; getRecentServerOutput: () => string },
+): Promise<T> {
 	let lastError: unknown;
 
 	for (let attempt = 1; attempt <= transportRetryAttempts; attempt += 1) {
 		const startedAt = Date.now();
+		if (diagnostics) {
+			logger.info(
+				`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} started at ${new Date(startedAt).toISOString()}.`,
+			);
+		}
 		try {
 			const result = await operation();
+			if (diagnostics) {
+				logger.info(
+					`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} completed in ${Date.now() - startedAt}ms.`,
+				);
+			}
 			if (attempt > 1) {
 				logger.info(
 					`OpenCode transport retry succeeded on attempt ${attempt}/${transportRetryAttempts} after ${Date.now() - startedAt}ms.`,
@@ -615,6 +632,15 @@ async function withTransportRetry<T>(operation: () => Promise<T>): Promise<T> {
 			return result;
 		} catch (error) {
 			lastError = error;
+			if (diagnostics) {
+				logger.warn(
+					`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} failed after ${Date.now() - startedAt}ms: ${error instanceof Error ? error.message : String(error)}.`,
+				);
+				const serverOutput = formatRecentServerOutput(diagnostics.getRecentServerOutput());
+				if (serverOutput) {
+					logger.warn(`${diagnostics.label} recent server output:\n${serverOutput}`);
+				}
+			}
 			if (
 				!isRetryableTransportError(error) ||
 				attempt === transportRetryAttempts
@@ -631,6 +657,22 @@ async function withTransportRetry<T>(operation: () => Promise<T>): Promise<T> {
 	}
 
 	throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function formatRecentServerOutput(output: string): string {
+	const secrets = Object.entries(process.env)
+		.filter(
+			([name, value]) =>
+				/(?:KEY|TOKEN|PASSWORD|SECRET|AUTH)/i.test(name) &&
+				value &&
+				value.length >= 6,
+		)
+		.map(([, value]) => value as string);
+	let sanitized = output;
+	for (const secret of secrets) {
+		sanitized = sanitized.replaceAll(secret, '[REDACTED]');
+	}
+	return sanitized.slice(-4000).trim();
 }
 
 async function shutdownChildProcess(
@@ -1254,6 +1296,8 @@ function extractTextFromParts(
 export type { OpencodeClient };
 
 export const __test__ = {
+	formatRecentServerOutput,
+	withTransportRetry,
 	buildStructuredJsonRetryPrompt,
 	isRetryableTransportError,
 	getResponseErrorMessage,

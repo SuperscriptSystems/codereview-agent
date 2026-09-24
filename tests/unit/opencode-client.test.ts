@@ -3,6 +3,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { __test__ } from '../../src/opencode/client.js';
 
 describe('opencode client structured output extraction', () => {
+	it('logs structured prompt retry timing and redacted server output on transport failure', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const info = vi.spyOn(console, 'log').mockImplementation(() => {});
+		const previousKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = 'test-secret-key';
+		try {
+			const operation = vi.fn()
+				.mockRejectedValueOnce(new Error('fetch failed'))
+				.mockResolvedValue({ ok: true });
+			await expect(__test__.withTransportRetry(operation, {
+				label: 'OpenCode structured prompt',
+				getRecentServerOutput: () => 'upstream error test-secret-key',
+			})).resolves.toEqual({ ok: true });
+			expect(operation).toHaveBeenCalledTimes(2);
+			expect(info).toHaveBeenCalledWith(expect.stringMatching(/OpenCode structured prompt attempt 1\/3 started at .*Z\./));
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining('OpenCode structured prompt attempt 1/3 failed after'));
+			expect(warn).toHaveBeenCalledWith('[warn] OpenCode structured prompt recent server output:\nupstream error [REDACTED]');
+		} finally {
+			if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+			else process.env.OPENAI_API_KEY = previousKey;
+			warn.mockRestore();
+			info.mockRestore();
+		}
+	});
 	it('reads structured output from v2 info.structured', () => {
 		expect(
 			__test__.getStructuredOutputInfo({
