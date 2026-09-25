@@ -60,10 +60,12 @@ export async function createSessionClient(
 
 	return {
 		async createSession(title: string): Promise<string> {
-			const response = await withTransportRetry(() =>
-				client.session.create({
-					body: { title },
-				}),
+			const response = await withTransportRetry(
+				() => client.session.create({ body: { title } }),
+				{
+					label: 'OpenCode createSession',
+					getRecentServerOutput: server.getRecentOutput,
+				},
 			);
 			const data = getResponseData<{ id?: string }>(response);
 
@@ -80,7 +82,13 @@ export async function createSessionClient(
 			return data.id;
 		},
 		async listAgents(): Promise<string[]> {
-			const response = await withTransportRetry(() => client.app.agents());
+			const response = await withTransportRetry(
+				() => client.app.agents(),
+				{
+					label: 'OpenCode listAgents',
+					getRecentServerOutput: server.getRecentOutput,
+				},
+			);
 			const data = getResponseData<Array<{ name?: string }>>(response);
 
 			if (!Array.isArray(data)) {
@@ -634,7 +642,7 @@ async function withTransportRetry<T>(
 			lastError = error;
 			if (diagnostics) {
 				logger.warn(
-					`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} failed after ${Date.now() - startedAt}ms: ${error instanceof Error ? error.message : String(error)}.`,
+					`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} failed after ${Date.now() - startedAt}ms: ${formatTransportError(error)}.`,
 				);
 				const serverOutput = formatRecentServerOutput(diagnostics.getRecentServerOutput());
 				if (serverOutput) {
@@ -660,6 +668,26 @@ async function withTransportRetry<T>(
 }
 
 function formatRecentServerOutput(output: string): string {
+	return redactSecrets(output).slice(-4000).trim();
+}
+
+function formatTransportError(error: unknown): string {
+	const details: string[] = [];
+	let current: unknown = error;
+	for (let depth = 0; depth < 3 && current; depth += 1) {
+		if (!(current instanceof Error)) {
+			if (depth === 0) details.push(String(current));
+			break;
+		}
+		const code = (current as Error & { code?: unknown }).code;
+		const name = current.name !== 'Error' ? `${current.name}: ` : '';
+		details.push(`${name}${current.message}${typeof code === 'string' ? ` (code: ${code})` : ''}`);
+		current = current.cause;
+	}
+	return redactSecrets(details.join(' <- caused by ')).slice(0, 800);
+}
+
+function redactSecrets(output: string): string {
 	const secrets = Object.entries(process.env)
 		.filter(
 			([name, value]) =>
@@ -672,7 +700,7 @@ function formatRecentServerOutput(output: string): string {
 	for (const secret of secrets) {
 		sanitized = sanitized.replaceAll(secret, '[REDACTED]');
 	}
-	return sanitized.slice(-4000).trim();
+	return sanitized;
 }
 
 async function shutdownChildProcess(
@@ -1297,6 +1325,7 @@ export type { OpencodeClient };
 
 export const __test__ = {
 	formatRecentServerOutput,
+	formatTransportError,
 	withTransportRetry,
 	buildStructuredJsonRetryPrompt,
 	isRetryableTransportError,

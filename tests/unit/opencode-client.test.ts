@@ -3,14 +3,35 @@ import { describe, expect, it, vi } from 'vitest';
 import { __test__ } from '../../src/opencode/client.js';
 
 describe('opencode client structured output extraction', () => {
+	it('shows the underlying transport timeout code without exposing credentials', () => {
+		const previousKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = 'test-secret-key';
+		try {
+			const cause = Object.assign(
+				new Error('connection to test-secret-key timed out'),
+				{ name: 'ConnectTimeoutError', code: 'UND_ERR_CONNECT_TIMEOUT' },
+			);
+			const error = new TypeError('fetch failed', { cause });
+			expect(__test__.formatTransportError(error)).toBe(
+				'TypeError: fetch failed <- caused by ConnectTimeoutError: connection to [REDACTED] timed out (code: UND_ERR_CONNECT_TIMEOUT)',
+			);
+		} finally {
+			if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+			else process.env.OPENAI_API_KEY = previousKey;
+		}
+	});
+
 	it('logs structured prompt retry timing and redacted server output on transport failure', async () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const info = vi.spyOn(console, 'log').mockImplementation(() => {});
 		const previousKey = process.env.OPENAI_API_KEY;
 		process.env.OPENAI_API_KEY = 'test-secret-key';
 		try {
+			const transportError = new TypeError('fetch failed', {
+				cause: Object.assign(new Error('socket timed out'), { code: 'ETIMEDOUT' }),
+			});
 			const operation = vi.fn()
-				.mockRejectedValueOnce(new Error('fetch failed'))
+				.mockRejectedValueOnce(transportError)
 				.mockResolvedValue({ ok: true });
 			await expect(__test__.withTransportRetry(operation, {
 				label: 'OpenCode structured prompt',
@@ -18,7 +39,7 @@ describe('opencode client structured output extraction', () => {
 			})).resolves.toEqual({ ok: true });
 			expect(operation).toHaveBeenCalledTimes(2);
 			expect(info).toHaveBeenCalledWith(expect.stringMatching(/OpenCode structured prompt attempt 1\/3 started at .*Z\./));
-			expect(warn).toHaveBeenCalledWith(expect.stringContaining('OpenCode structured prompt attempt 1/3 failed after'));
+			expect(warn).toHaveBeenCalledWith(expect.stringMatching(/OpenCode structured prompt attempt 1\/3 failed after \d+ms: TypeError: fetch failed <- caused by socket timed out \(code: ETIMEDOUT\)/));
 			expect(warn).toHaveBeenCalledWith('[warn] OpenCode structured prompt recent server output:\nupstream error [REDACTED]');
 		} finally {
 			if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
