@@ -29,6 +29,7 @@ export interface RunReviewInput {
 	batching: BatchingConfig;
 	batchTimeoutMs: number;
 	structuredOutputRetryCount: number;
+	signal?: AbortSignal;
 }
 
 interface ReviewAgent {
@@ -72,6 +73,7 @@ export async function runReview(
 	client: OpencodeSessionClient,
 	input: RunReviewInput,
 ): Promise<Record<string, ReviewResult>> {
+	input.signal?.throwIfAborted();
 	// The bundled config defines reviewer; agent discovery is only needed by check-reviewer.
 	const resolvedAgent: ReviewAgent = { name: preferredReviewAgent };
 	logger.info(
@@ -106,6 +108,7 @@ async function collectReviewIssues(
 	input: RunReviewInput,
 	resolvedAgent: ReviewAgent,
 ): Promise<unknown> {
+	input.signal?.throwIfAborted();
 	if (input.batching.enabled) {
 		const batches = buildReviewBatches(input.changedFilesMap, input.batching);
 
@@ -115,6 +118,7 @@ async function collectReviewIssues(
 			const totalBatches = batches.length;
 
 			for (const [index, changedFilesMap] of batches.entries()) {
+				input.signal?.throwIfAborted();
 				logger.info(
 					`Processing review batch ${index + 1}/${totalBatches} (${Object.keys(changedFilesMap).length} files).`,
 				);
@@ -136,6 +140,7 @@ async function collectReviewIssues(
 						),
 					);
 				} catch (error) {
+					input.signal?.throwIfAborted();
 					if (!input.failOpen) {
 						throw error;
 					}
@@ -161,25 +166,40 @@ async function collectReviewIssues(
 		}
 	}
 
-	const sessionId = await client.createSession('reviewer');
+	let sessionId: string | undefined;
+	const batchDetails = buildBatchTimeoutDetails(client, input);
 
 	try {
 		const prompt = buildReviewPrompt(input);
-		const batchDetails = buildBatchTimeoutDetails(client, input);
 		return await withBatchTimeout(
-			signal =>
-				promptReviewIssues(
+			async signal => {
+				const createdSessionId = await client.createSession('reviewer', signal);
+				if (signal.aborted) {
+					// A client ignoring cancellation can return a session after the deadline.
+					abortTimedOutSession(client, createdSessionId);
+					await deleteCompletedSession(client, createdSessionId);
+					signal.throwIfAborted();
+				}
+				sessionId = createdSessionId;
+				return await promptReviewIssues(
 					client,
 					sessionId,
 					prompt,
 					resolvedAgent,
 					input.structuredOutputRetryCount,
 					signal,
-				),
+				);
+			},
 			batchDetails,
-			() => abortTimedOutSession(client, sessionId),
+			() => {
+				batchDetails.recentServerOutput =
+					client.getDiagnostics().recentServerOutput;
+				if (sessionId) abortTimedOutSession(client, sessionId);
+			},
+			input.signal,
 		);
 	} catch (error) {
+		input.signal?.throwIfAborted();
 		if (
 			!shouldRetryReviewInSmallerBatches(error) ||
 			Object.keys(input.changedFilesMap).length < 2
@@ -191,7 +211,7 @@ async function collectReviewIssues(
 			`Structured review failed for ${Object.keys(input.changedFilesMap).length} files. Retrying in smaller batches.`,
 		);
 	} finally {
-		await deleteCompletedSession(client, sessionId);
+		if (sessionId) await deleteCompletedSession(client, sessionId);
 	}
 
 	const [leftChangedFilesMap, rightChangedFilesMap] = splitChangedFilesMap(
@@ -227,33 +247,35 @@ async function withBatchTimeout<T>(
 	operation: (signal: AbortSignal) => Promise<T>,
 	details: ReviewBatchTimeoutDetails,
 	onTimeout: () => void,
+	parentSignal?: AbortSignal,
 ): Promise<T> {
 	let timeoutId: ReturnType<typeof setTimeout> | undefined;
 	const controller = new AbortController();
+	const signal = parentSignal
+		? AbortSignal.any([parentSignal, controller.signal])
+		: controller.signal;
 	const timeoutError = new ReviewBatchTimeoutError(details);
-	const promise = operation(controller.signal).catch(error => {
-		if (controller.signal.aborted) {
-			throw timeoutError;
-		}
-
-		throw error;
-	});
+	let onAbort: (() => void) | undefined;
 
 	try {
-		return await Promise.race([
-			promise,
-			new Promise<T>((_, reject) => {
-				timeoutId = setTimeout(() => {
-					controller.abort();
-					onTimeout();
-					reject(timeoutError);
-				}, details.timeoutMs);
-			}),
-		]);
+		signal.throwIfAborted();
+		const cancelled = new Promise<never>((_, reject) => {
+			onAbort = () => {
+				onTimeout();
+				reject(signal.reason);
+			};
+			signal.addEventListener('abort', onAbort, { once: true });
+		});
+		timeoutId = setTimeout(
+			() => controller.abort(timeoutError),
+			details.timeoutMs,
+		);
+		return await Promise.race([operation(signal), cancelled]);
 	} finally {
 		if (timeoutId) {
 			clearTimeout(timeoutId);
 		}
+		if (onAbort) signal.removeEventListener('abort', onAbort);
 	}
 }
 

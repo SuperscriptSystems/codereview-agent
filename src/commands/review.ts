@@ -193,29 +193,36 @@ export async function runReviewCommand(
 	const jiraDetails = await timeReviewStage('Jira context', () =>
 		buildJiraContext(repoPath, commitMessages),
 	);
-	const sessionClient = await timeReviewStage('OpenCode server startup', () =>
-		createSessionClient(rawConfig, repoPath),
-	);
+	let sessionClient:
+		| Awaited<ReturnType<typeof createSessionClient>>
+		| undefined;
 
 	try {
+		const client = await timeReviewStage('OpenCode server startup', () =>
+			createSessionClient(rawConfig, repoPath),
+		);
+		sessionClient = client;
 		const reviewResults = await timeReviewStage('OpenCode review', () =>
 			withTotalReviewTimeout(
-				runReview(sessionClient, {
-					repoPath,
-					staged: options.staged,
-					baseRef: options.baseRef,
-					headRef: options.headRef,
-					changedFilesMap: filteredChangedFilesMap,
-					commitMessages,
-					jiraDetails,
-					reviewRules: config.review.customRules,
-					repositoryInstructions,
-					focusAreas,
-					failOpen: config.review.failOpen,
-					batching: config.review.batching,
-					batchTimeoutMs: config.review.batchTimeoutMs,
-					structuredOutputRetryCount: config.review.structuredOutputRetryCount,
-				}),
+				signal =>
+					runReview(client, {
+						repoPath,
+						staged: options.staged,
+						baseRef: options.baseRef,
+						headRef: options.headRef,
+						changedFilesMap: filteredChangedFilesMap,
+						commitMessages,
+						jiraDetails,
+						reviewRules: config.review.customRules,
+						repositoryInstructions,
+						focusAreas,
+						failOpen: config.review.failOpen,
+						batching: config.review.batching,
+						batchTimeoutMs: config.review.batchTimeoutMs,
+						structuredOutputRetryCount:
+							config.review.structuredOutputRetryCount,
+						signal,
+					}),
 				config.review.totalTimeoutMs,
 			),
 		);
@@ -281,7 +288,10 @@ export async function runReviewCommand(
 
 		throw error;
 	} finally {
-		await timeReviewStage('OpenCode server shutdown', () => sessionClient.close());
+		if (sessionClient) {
+			const client = sessionClient;
+			await timeReviewStage('OpenCode server shutdown', () => client.close());
+		}
 	}
 }
 
@@ -302,17 +312,22 @@ async function timeReviewStage<T>(
 }
 
 async function withTotalReviewTimeout<T>(
-	promise: Promise<T>,
+	operation: (signal: AbortSignal) => Promise<T>,
 	timeoutMs: number,
 ): Promise<T> {
 	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const controller = new AbortController();
+	const timeoutError = new Error(
+		`Review execution timed out after ${timeoutMs}ms.`,
+	);
 
 	try {
 		return await Promise.race([
-			promise,
+			operation(controller.signal),
 			new Promise<T>((_, reject) => {
 				timeoutId = setTimeout(() => {
-					reject(new Error(`Review execution timed out after ${timeoutMs}ms.`));
+					reject(timeoutError);
+					controller.abort(timeoutError);
 				}, timeoutMs);
 				timeoutId.unref?.();
 			}),
@@ -354,6 +369,13 @@ async function approvePullRequestIfPresent(): Promise<void> {
 
 function describeReviewFailure(error: unknown): string[] {
 	const message = error instanceof Error ? error.message : String(error);
+
+	if (message.includes('OpenCode repository initialization timed out')) {
+		return [
+			'Review failure category: repository initialization timeout.',
+			'OpenCode did not initialize the repository before the startup deadline. Inspect the recent internal server logs for the blocked bootstrap step.',
+		];
+	}
 
 	if (message.includes('Review batch timed out after')) {
 		const details = isReviewBatchTimeoutError(error) ? error.details : null;

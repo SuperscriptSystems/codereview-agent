@@ -211,12 +211,19 @@ describe('review command', () => {
 			},
 			batchTimeoutMs: 120000,
 			structuredOutputRetryCount: 10,
+			signal: expect.any(AbortSignal),
 		});
 		expect(getReviewerInstructionsMock).toHaveBeenCalledWith('/repo', 'HEAD');
 		expect(sessionClient.close).toHaveBeenCalled();
-		expect(loggerFns.info).toHaveBeenCalledWith(expect.stringMatching(/^Jira context started at .*Z\.$/));
-		expect(loggerFns.info).toHaveBeenCalledWith(expect.stringMatching(/^OpenCode review completed in \d+ms\.$/));
-		expect(loggerFns.info).toHaveBeenCalledWith(expect.stringMatching(/^OpenCode server shutdown completed in \d+ms\.$/));
+		expect(loggerFns.info).toHaveBeenCalledWith(
+			expect.stringMatching(/^Jira context started at .*Z\.$/),
+		);
+		expect(loggerFns.info).toHaveBeenCalledWith(
+			expect.stringMatching(/^OpenCode review completed in \d+ms\.$/),
+		);
+		expect(loggerFns.info).toHaveBeenCalledWith(
+			expect.stringMatching(/^OpenCode server shutdown completed in \d+ms\.$/),
+		);
 	});
 
 	it('passes range review inputs through the new runReview shape', async () => {
@@ -766,6 +773,35 @@ describe('review command', () => {
 		);
 		expect(approveBitbucketPullRequestMock).toHaveBeenCalledTimes(1);
 		expect(sessionClient.close).toHaveBeenCalled();
+		expect(runReviewMock.mock.calls[0][1].signal.aborted).toBe(true);
+	});
+
+	it('keeps fail-open approval when repository readiness fails during startup', async () => {
+		parseConfigMock.mockReturnValue({
+			review: buildReviewConfig({ failOpen: true }),
+		});
+		process.env.BITBUCKET_PR_ID = '7';
+		getDiffMock.mockResolvedValue('diff');
+		parseChangedFilesFromDiffMock.mockReturnValue({ 'src/app.ts': 'diff' });
+		getCommitMessagesMock.mockResolvedValue('commit');
+		createSessionClientMock.mockRejectedValue(
+			new Error('OpenCode repository initialization timed out after 60000ms.'),
+		);
+		await expect(
+			runReviewCommand({
+				repoPath: '/repo',
+				baseRef: 'main',
+				headRef: 'HEAD',
+				staged: false,
+				trace: false,
+			}),
+		).resolves.toBeUndefined();
+		expect(runReviewMock).not.toHaveBeenCalled();
+		expect(approveBitbucketPullRequestMock).toHaveBeenCalledTimes(1);
+		expect(sessionClient.close).not.toHaveBeenCalled();
+		expect(loggerFns.warn).toHaveBeenCalledWith(
+			'Review failure category: repository initialization timeout.',
+		);
 	});
 
 	it('does not depend on legacy context expansion imports in the primary path', async () => {

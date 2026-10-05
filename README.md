@@ -63,6 +63,13 @@ The contents of `reviewer-instructions.md` are explicitly included in every batc
 
 JSON output is requested through OpenCode's `json_schema` format and validated against the review schema. Native structured results are used immediately; a plain-text JSON fallback is requested only when the response contains no usable structured or JSON payload.
 
+## Review timing and diagnostics
+
+- Startup checks HTTP health and initializes the target repository through `/path` before starting a review. Repository initialization has a 60-second deadline; ordinary API requests have a 15-second deadline.
+- Prompts use OpenCode's asynchronous API. Each turn is submitted once and its result is matched by message ID, using session status and events to wait for completion. A long analysis does not cause the prompt to be resubmitted after a 300-second HTTP headers timeout.
+- The configured batch timeout includes session creation, analysis, and JSON formatting. The total review timeout cancels the active batch and prevents subsequent batches from starting.
+- CI logs show stage timings and prompt progress every 30 seconds, including active tools and provider retry status. Internal OpenCode debug logs are captured in a bounded, secret-redacted buffer and included when a request fails. Client shutdown cancels pending work and retries.
+
 Key config fields:
 
 - `review.maxContextFiles`

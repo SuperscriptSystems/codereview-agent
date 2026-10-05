@@ -6,16 +6,23 @@ import { spawn } from 'node:child_process';
 
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk';
 import { logger } from '../core/logger.js';
+import { defaultPromptTimeoutMs, runAsyncPrompt } from './async-prompt.js';
+import {
+	formatRecentServerOutput,
+	formatTransportError,
+	isRetryableTransportError,
+	runRequest,
+	withTransportRetry,
+} from './request.js';
 
-const transportRetryAttempts = 3;
-const transportRetryBaseDelayMs = 500;
 const structuredSessionPollAttempts = 12;
 const structuredSessionPollDelayMs = 500;
 const serverStartupTimeoutMs = 30_000;
 const serverStartupPollDelayMs = 100;
+const repositoryReadyTimeoutMs = 60_000;
 
 export interface OpencodeSessionClient {
-	createSession(title: string): Promise<string>;
+	createSession(title: string, signal?: AbortSignal): Promise<string>;
 	listAgents(): Promise<string[]>;
 	promptText(
 		sessionId: string,
@@ -57,14 +64,33 @@ export async function createSessionClient(
 		directory,
 	});
 	const baseUrl = server.url;
+	const lifetime = new AbortController();
+	try {
+		await waitForRepositoryReady(
+			client,
+			baseUrl,
+			lifetime.signal,
+			server.getRecentOutput,
+			directory,
+		);
+	} catch (error) {
+		lifetime.abort(error);
+		await server.close();
+		throw error;
+	}
+	const requestSignal = (signal?: AbortSignal) =>
+		signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
 
 	return {
-		async createSession(title: string): Promise<string> {
-			const response = await withTransportRetry(
-				() => client.session.create({ body: { title } }),
+		async createSession(title: string, signal?: AbortSignal): Promise<string> {
+			const response = await runRequest(
+				requestSignal =>
+					client.session.create({ body: { title }, signal: requestSignal }),
 				{
 					label: 'OpenCode createSession',
 					getRecentServerOutput: server.getRecentOutput,
+					signal: requestSignal(signal),
+					retry: false,
 				},
 			);
 			const data = getResponseData<{ id?: string }>(response);
@@ -82,11 +108,12 @@ export async function createSessionClient(
 			return data.id;
 		},
 		async listAgents(): Promise<string[]> {
-			const response = await withTransportRetry(
-				() => client.app.agents(),
+			const response = await runRequest(
+				signal => client.app.agents({ signal }),
 				{
 					label: 'OpenCode listAgents',
 					getRecentServerOutput: server.getRecentOutput,
+					signal: lifetime.signal,
 				},
 			);
 			const data = getResponseData<Array<{ name?: string }>>(response);
@@ -114,18 +141,22 @@ export async function createSessionClient(
 				signal?: AbortSignal;
 			},
 		): Promise<string> {
-			const response = await withTransportRetry<
-				Awaited<ReturnType<typeof client.session.prompt>>
-			>(() =>
-				client.session.prompt({
-					path: { id: sessionId },
-					signal: options.signal,
-					body: {
-						agent: options.agent,
-						system: options.system,
-						parts: [{ type: 'text', text: options.prompt }],
-					},
-				}),
+			const response = await runAsyncPrompt(
+				client,
+				sessionId,
+				{
+					agent: options.agent,
+					system: options.system,
+					parts: [{ type: 'text', text: options.prompt }],
+				},
+				{
+					signal: requestSignal(
+						options.signal ?? AbortSignal.timeout(defaultPromptTimeoutMs),
+					),
+					cleanupSignal: lifetime.signal,
+					label: 'OpenCode text prompt',
+					getRecentServerOutput: server.getRecentOutput,
+				},
 			);
 			const data = getResponseData<{
 				parts?: Array<{ type: string; text?: string }>;
@@ -154,25 +185,25 @@ export async function createSessionClient(
 				signal?: AbortSignal;
 			},
 		): Promise<T> {
-			// The OpenCode server accepts `format` for structured output, but the SDK type here lags behind the API.
-			const response = await withTransportRetry<
-				Awaited<ReturnType<typeof client.session.prompt>>
-			>(() =>
-				client.session.prompt({
-					path: { id: sessionId },
-					signal: options.signal,
-					body: {
-						agent: options.agent,
-						system: options.system,
-						parts: [{ type: 'text', text: options.prompt }],
-						format: {
-							type: 'json_schema',
-							retryCount: options.retryCount ?? 3,
-							schema: options.schema,
-						},
-					} as unknown as Parameters<typeof client.session.prompt>[0]['body'],
-				} as Parameters<typeof client.session.prompt>[0]),
+			const signal = requestSignal(
+				options.signal ?? AbortSignal.timeout(defaultPromptTimeoutMs),
+			);
+			const response = await runAsyncPrompt(
+				client,
+				sessionId,
 				{
+					agent: options.agent,
+					system: options.system,
+					parts: [{ type: 'text', text: options.prompt }],
+					format: {
+						type: 'json_schema',
+						retryCount: options.retryCount ?? 3,
+						schema: options.schema,
+					},
+				},
+				{
+					signal,
+					cleanupSignal: lifetime.signal,
 					label: 'OpenCode structured prompt',
 					getRecentServerOutput: server.getRecentOutput,
 				},
@@ -182,26 +213,47 @@ export async function createSessionClient(
 				client,
 				baseUrl,
 				sessionId,
-				options,
+				{
+					...options,
+					signal,
+					cleanupSignal: lifetime.signal,
+					getRecentServerOutput: server.getRecentOutput,
+				},
 				response,
 			);
 		},
 		async close(): Promise<void> {
+			lifetime.abort(new Error('OpenCode client closed.'));
 			await server.close();
 		},
 		async abortSession(sessionId: string, signal?: AbortSignal): Promise<void> {
-			await withTransportRetry(() =>
-				client.session.abort({
-					path: { id: sessionId },
-					signal,
-				}),
+			await runRequest(
+				requestSignal =>
+					client.session.abort({
+						path: { id: sessionId },
+						signal: requestSignal,
+					}),
+				{
+					signal: requestSignal(signal),
+					timeoutMs: 5000,
+					label: 'OpenCode abortSession',
+					quiet: true,
+				},
 			);
 		},
 		async deleteSession(sessionId: string): Promise<void> {
-			await withTransportRetry(() =>
-				client.session.delete({
-					path: { id: sessionId },
-				}),
+			await runRequest(
+				signal =>
+					client.session.delete({
+						path: { id: sessionId },
+						signal,
+					}),
+				{
+					signal: lifetime.signal,
+					timeoutMs: 5000,
+					label: 'OpenCode deleteSession',
+					quiet: true,
+				},
 			);
 		},
 		getDiagnostics(): { recentServerOutput: string } {
@@ -214,13 +266,20 @@ async function extractStructuredPromptPayload<T>(
 	client: OpencodeClient,
 	baseUrl: string,
 	sessionId: string,
-	options: Parameters<OpencodeSessionClient['promptStructured']>[1],
+	options: Parameters<OpencodeSessionClient['promptStructured']>[1] & {
+		cleanupSignal?: AbortSignal;
+		getRecentServerOutput?: () => string;
+	},
 	response: unknown,
 ): Promise<T> {
 	const responseError = getResponseErrorMessage(response);
 	if (responseError) {
 		throw new Error(
-			buildOpencodeErrorMessage('run a structured prompt', response, responseError),
+			buildOpencodeErrorMessage(
+				'run a structured prompt',
+				response,
+				responseError,
+			),
 		);
 	}
 	const info = getStructuredOutputInfo(response);
@@ -257,23 +316,13 @@ async function extractStructuredPromptPayload<T>(
 		return plainTextFallback;
 	}
 
-	const sessionFallback = await extractStructuredPayloadFromSession<T>(
-		client,
-		baseUrl,
-		sessionId,
-		options.schema,
-	);
-	if (sessionFallback !== null) {
-		return sessionFallback;
-	}
-
 	const promptText = extractPromptText(response);
-	const sessionDetails = await describeSessionStructuredState(
-		client,
-		baseUrl,
-		sessionId,
-	);
-	const details = promptText ? ` Raw response text: ${truncateText(promptText, 400)}` : '';
+	const sessionDetails = describeSessionMessages({
+		data: [getResponseData(response)],
+	});
+	const details = promptText
+		? ` Raw response text: ${truncateText(promptText, 400)}`
+		: '';
 	throw new Error(
 		`OpenCode did not return a structured output payload.${details}${sessionDetails ? ` Session state: ${sessionDetails}` : ''}`,
 	);
@@ -289,32 +338,33 @@ async function promptStructuredViaTextFallback<T>(
 		prompt: string;
 		schema: Record<string, unknown>;
 		signal?: AbortSignal;
+		cleanupSignal?: AbortSignal;
+		getRecentServerOutput?: () => string;
 	},
 ): Promise<T | null> {
 	const startedAt = Date.now();
 	logger.info(
 		'Structured output missing, retrying with plain-text JSON fallback.',
 	);
-	const response = await withTransportRetry<
-		Awaited<ReturnType<typeof client.session.prompt>>
-	>(() =>
-		client.session.prompt({
-			path: { id: sessionId },
+	const response = await runAsyncPrompt(
+		client,
+		sessionId,
+		{
+			agent: options.agent,
+			system: options.system,
+			parts: [
+				{
+					type: 'text',
+					text: buildStructuredJsonRetryPrompt(options.prompt, options.schema),
+				},
+			],
+		},
+		{
 			signal: options.signal,
-			body: {
-				agent: options.agent,
-				system: options.system,
-				parts: [
-					{
-						type: 'text',
-						text: buildStructuredJsonRetryPrompt(
-							options.prompt,
-							options.schema,
-						),
-					},
-				],
-			},
-		}),
+			cleanupSignal: options.cleanupSignal,
+			getRecentServerOutput: options.getRecentServerOutput,
+			label: 'OpenCode JSON fallback',
+		},
 	);
 	logger.info(
 		`Plain-text structured fallback completed in ${Date.now() - startedAt}ms.`,
@@ -341,12 +391,7 @@ async function promptStructuredViaTextFallback<T>(
 		return noIssuesPayload;
 	}
 
-	return await extractStructuredPayloadFromSession<T>(
-		client,
-		baseUrl,
-		sessionId,
-		options.schema,
-	);
+	return null;
 }
 
 async function extractStructuredPayloadFromSession<T>(
@@ -395,12 +440,15 @@ async function getSessionMessages(
 	baseUrl: string,
 	sessionId: string,
 ): Promise<unknown> {
-	const sdkResponse = await withTransportRetry<
+	const sdkResponse = await runRequest<
 		Awaited<ReturnType<typeof client.session.messages>>
-	>(() =>
-		client.session.messages({
-			path: { id: sessionId },
-		} as Parameters<typeof client.session.messages>[0]),
+	>(
+		signal =>
+			client.session.messages({
+				path: { id: sessionId },
+				signal,
+			} as Parameters<typeof client.session.messages>[0]),
+		{ label: 'OpenCode diagnostic session messages', quiet: true },
 	);
 
 	if (getResponseData<unknown>(sdkResponse) !== undefined) {
@@ -431,7 +479,10 @@ async function fetchSessionMessages(
 	const url = `${baseUrl.replace(/\/$/, '')}/session/${encodeURIComponent(sessionId)}/message`;
 
 	try {
-		const response = await fetch(url);
+		const response = await runRequest(signal => fetch(url, { signal }), {
+			label: 'OpenCode raw session messages',
+			quiet: true,
+		});
 		const text = await response.text();
 		let data: unknown = text;
 		if (text) {
@@ -470,7 +521,14 @@ async function startIsolatedOpencodeServer(
 	const cwd = await mkdtemp(path.join(tmpdir(), 'code-review-agent-opencode-'));
 	const proc = spawn(
 		'opencode',
-		['serve', '--pure', `--hostname=127.0.0.1`, `--port=${port}`],
+		[
+			'serve',
+			'--pure',
+			'--print-logs',
+			'--log-level=DEBUG',
+			`--hostname=127.0.0.1`,
+			`--port=${port}`,
+		],
 		{
 			cwd,
 			env: buildOpencodeServerEnv(process.env, config),
@@ -478,30 +536,14 @@ async function startIsolatedOpencodeServer(
 	);
 
 	let output = '';
-	const recentOutputLines: string[] = [];
-	const appendRecentOutput = (chunk: string): void => {
-		for (const line of chunk.split(/\r?\n/)) {
-			const trimmed = line.trim();
-			if (!trimmed) {
-				continue;
-			}
-
-			recentOutputLines.push(trimmed);
-			if (recentOutputLines.length > 50) {
-				recentOutputLines.shift();
-			}
-		}
-	};
 	proc.stdout?.on('data', chunk => {
 		const text = chunk.toString();
-		appendRecentOutput(text);
-		output += text;
+		output = (output + text).slice(-64_000);
 	});
 
 	proc.stderr?.on('data', chunk => {
 		const text = chunk.toString();
-		appendRecentOutput(text);
-		output += text;
+		output = (output + text).slice(-64_000);
 	});
 
 	let url: string;
@@ -517,13 +559,76 @@ async function startIsolatedOpencodeServer(
 	return {
 		url,
 		getRecentOutput(): string {
-			return recentOutputLines.join('\n');
+			return formatRecentServerOutput(output);
 		},
 		async close(): Promise<void> {
 			await shutdownChildProcess(proc);
 			await rm(cwd, { recursive: true, force: true });
 		},
 	};
+}
+
+async function waitForRepositoryReady(
+	client: OpencodeClient,
+	baseUrl: string,
+	signal: AbortSignal,
+	getRecentServerOutput: () => string,
+	expectedDirectory?: string,
+): Promise<void> {
+	await runRequest(
+		async requestSignal => {
+			const response = await fetch(`${baseUrl}/global/health`, {
+				signal: requestSignal,
+			});
+			if (
+				!response.ok ||
+				!((await response.json()) as { healthy?: boolean }).healthy
+			) {
+				throw new Error(
+					`OpenCode health check failed: HTTP ${response.status}.`,
+				);
+			}
+		},
+		{
+			signal,
+			label: 'OpenCode API health',
+			timeoutMs: 5000,
+			retry: false,
+			getRecentServerOutput,
+		},
+	);
+	const data = await runRequest(
+		async requestSignal => {
+			const response = await client.path.get({ signal: requestSignal });
+			const data = getResponseData<{ directory?: string }>(response);
+			if (typeof data?.directory !== 'string') {
+				throw new Error(
+					buildOpencodeErrorMessage(
+						'initialize repository',
+						response,
+						'OpenCode did not return a repository path.',
+					),
+				);
+			}
+			if (
+				expectedDirectory &&
+				path.resolve(data.directory) !== path.resolve(expectedDirectory)
+			) {
+				throw new Error(
+					`OpenCode initialized ${data.directory} instead of the requested repository ${expectedDirectory}.`,
+				);
+			}
+			return data;
+		},
+		{
+			signal,
+			label: 'OpenCode repository initialization',
+			timeoutMs: repositoryReadyTimeoutMs,
+			retry: false,
+			getRecentServerOutput,
+		},
+	);
+	logger.info(`OpenCode repository ready: ${data.directory}.`);
 }
 
 function buildOpencodeServerEnv(
@@ -624,99 +729,8 @@ async function canConnectToPort(port: number): Promise<boolean> {
 }
 
 function formatServerOutput(output: string): string {
-	const trimmed = output.trim();
+	const trimmed = formatRecentServerOutput(output);
 	return trimmed ? `\nServer output:\n${trimmed}` : '';
-}
-
-async function withTransportRetry<T>(
-	operation: () => Promise<T>,
-	diagnostics?: { label: string; getRecentServerOutput: () => string },
-): Promise<T> {
-	let lastError: unknown;
-
-	for (let attempt = 1; attempt <= transportRetryAttempts; attempt += 1) {
-		const startedAt = Date.now();
-		if (diagnostics) {
-			logger.info(
-				`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} started at ${new Date(startedAt).toISOString()}.`,
-			);
-		}
-		try {
-			const result = await operation();
-			if (diagnostics) {
-				logger.info(
-					`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} completed in ${Date.now() - startedAt}ms.`,
-				);
-			}
-			if (attempt > 1) {
-				logger.info(
-					`OpenCode transport retry succeeded on attempt ${attempt}/${transportRetryAttempts} after ${Date.now() - startedAt}ms.`,
-				);
-			}
-			return result;
-		} catch (error) {
-			lastError = error;
-			if (diagnostics) {
-				logger.warn(
-					`${diagnostics.label} attempt ${attempt}/${transportRetryAttempts} failed after ${Date.now() - startedAt}ms: ${formatTransportError(error)}.`,
-				);
-				const serverOutput = formatRecentServerOutput(diagnostics.getRecentServerOutput());
-				if (serverOutput) {
-					logger.warn(`${diagnostics.label} recent server output:\n${serverOutput}`);
-				}
-			}
-			if (
-				!isRetryableTransportError(error) ||
-				attempt === transportRetryAttempts
-			) {
-				throw error;
-			}
-
-			logger.warn(
-				`OpenCode transport attempt ${attempt}/${transportRetryAttempts} failed after ${Date.now() - startedAt}ms: ${error instanceof Error ? error.message : String(error)}. Retrying in ${transportRetryBaseDelayMs * attempt}ms.`,
-			);
-
-			await wait(transportRetryBaseDelayMs * attempt);
-		}
-	}
-
-	throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
-function formatRecentServerOutput(output: string): string {
-	return redactSecrets(output).slice(-4000).trim();
-}
-
-function formatTransportError(error: unknown): string {
-	const details: string[] = [];
-	let current: unknown = error;
-	for (let depth = 0; depth < 3 && current; depth += 1) {
-		if (!(current instanceof Error)) {
-			if (depth === 0) details.push(String(current));
-			break;
-		}
-		const code = (current as Error & { code?: unknown }).code;
-		const name = current.name !== 'Error' ? `${current.name}: ` : '';
-		details.push(`${name}${current.message}${typeof code === 'string' ? ` (code: ${code})` : ''}`);
-		current = current.cause;
-	}
-	return redactSecrets(details.join(' <- caused by ')).slice(0, 800);
-}
-
-function redactSecrets(output: string): string {
-	const secrets = Object.entries(process.env)
-		.filter(
-			([name, value]) =>
-				/(?:KEY|TOKEN|PASSWORD|SECRET|AUTH)/i.test(name) &&
-				value &&
-				value.length >= 6,
-		)
-		.map(([, value]) => value as string);
-	let sanitized = output;
-	for (const secret of secrets) {
-		sanitized = sanitized.replaceAll(secret, '[REDACTED]');
-	}
-	return sanitized;
 }
 
 async function shutdownChildProcess(
@@ -848,15 +862,6 @@ function getResponseData<T>(response: unknown): T | undefined {
 	}
 
 	return response as T;
-}
-
-function isRetryableTransportError(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error);
-	return (
-		message.includes('fetch failed') ||
-		message.includes('ECONNRESET') ||
-		message.includes('socket hang up')
-	);
 }
 
 function buildOpencodeErrorMessage(
@@ -1340,6 +1345,7 @@ function extractTextFromParts(
 export type { OpencodeClient };
 
 export const __test__ = {
+	waitForRepositoryReady,
 	extractStructuredPromptPayload,
 	formatRecentServerOutput,
 	formatTransportError,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { __test__ } from '../../src/opencode/client.js';
 import { reviewIssuesEnvelopeJsonSchema } from '../../src/core/models.js';
@@ -6,62 +6,218 @@ import { reviewIssuesEnvelopeJsonSchema } from '../../src/core/models.js';
 describe('opencode structured prompt responses', () => {
 	const options = {
 		agent: 'reviewer',
-		prompt: 'Review the diff.\n<BEGIN_REPOSITORY_INSTRUCTIONS>\nCheck Team isolation.\n<END_REPOSITORY_INSTRUCTIONS>',
+		prompt:
+			'Review the diff.\n<BEGIN_REPOSITORY_INSTRUCTIONS>\nCheck Team isolation.\n<END_REPOSITORY_INSTRUCTIONS>',
 		schema: reviewIssuesEnvelopeJsonSchema,
 	};
 	const payload = {
-		issues: [{ filePath: 'src/app.ts', lineNumber: 1, issueType: 'Security', comment: 'Team isolation missing.' }],
+		issues: [
+			{
+				filePath: 'src/app.ts',
+				lineNumber: 1,
+				issueType: 'Security',
+				comment: 'Team isolation missing.',
+			},
+		],
 	};
 
 	it.each([
 		{ info: { structured_output: payload }, parts: [] },
-		{ data: { info: { structured: payload }, parts: [{ type: 'text', text: 'No issues found.' }] } },
-	])('returns native structured findings without an additional prompt (%#)', async response => {
-		const prompt = vi.fn();
-		const messages = vi.fn();
-		await expect(__test__.extractStructuredPromptPayload(
-			{ session: { prompt, messages } } as any,
-			'http://127.0.0.1:4096',
-			'session-1',
-			options,
-			response,
-		)).resolves.toEqual(payload);
-		expect(prompt).not.toHaveBeenCalled();
-		expect(messages).not.toHaveBeenCalled();
-	});
+		{
+			data: {
+				info: { structured: payload },
+				parts: [{ type: 'text', text: 'No issues found.' }],
+			},
+		},
+	])(
+		'returns native structured findings without an additional prompt (%#)',
+		async response => {
+			const prompt = vi.fn();
+			const messages = vi.fn();
+			await expect(
+				__test__.extractStructuredPromptPayload(
+					{ session: { prompt, messages } } as any,
+					'http://127.0.0.1:4096',
+					'session-1',
+					options,
+					response,
+				),
+			).resolves.toEqual(payload);
+			expect(prompt).not.toHaveBeenCalled();
+			expect(messages).not.toHaveBeenCalled();
+		},
+	);
 
 	it('preserves the task and project rules when JSON formatting requires a fallback', async () => {
-		const prompt = vi.fn().mockResolvedValue({
-			data: { parts: [{ type: 'text', text: `BEGIN_JSON\n${JSON.stringify(payload)}\nEND_JSON` }] },
+		const promptAsync = vi
+			.fn()
+			.mockResolvedValue({ response: { status: 204 } });
+		const messages = vi.fn(async () => ({
+			data: [
+				{
+					info: {
+						role: 'assistant',
+						parentID: promptAsync.mock.calls[0][0].body.messageID,
+						time: { completed: 1 },
+						finish: 'stop',
+					},
+					parts: [
+						{
+							type: 'text',
+							text: `BEGIN_JSON\n${JSON.stringify(payload)}\nEND_JSON`,
+						},
+					],
+				},
+			],
+		}));
+		const subscribe = async ({ signal }: { signal: AbortSignal }) => ({
+			stream: (async function* () {
+				yield { type: 'server.connected', properties: {} };
+				if (!signal.aborted)
+					await new Promise(resolve =>
+						signal.addEventListener('abort', resolve, { once: true }),
+					);
+			})(),
 		});
-		await expect(__test__.extractStructuredPromptPayload(
-			{ session: { prompt } } as any,
-			'http://127.0.0.1:4096',
-			'session-1',
-			options,
-			{ data: { parts: [{ type: 'text', text: 'Could not format the review result.' }] } },
-		)).resolves.toEqual(payload);
-		expect(prompt).toHaveBeenCalledTimes(1);
-		const body = prompt.mock.calls[0][0].body;
+		await expect(
+			__test__.extractStructuredPromptPayload(
+				{
+					event: { subscribe },
+					session: {
+						promptAsync,
+						messages,
+						status: async () => ({ data: {} }),
+					},
+				} as any,
+				'http://127.0.0.1:4096',
+				'session-1',
+				options,
+				{
+					data: {
+						parts: [
+							{ type: 'text', text: 'Could not format the review result.' },
+						],
+					},
+				},
+			),
+		).resolves.toEqual(payload);
+		expect(promptAsync).toHaveBeenCalledTimes(1);
+		const body = promptAsync.mock.calls[0][0].body;
 		expect(body.agent).toBe('reviewer');
 		expect(body.system).toBeUndefined();
 		expect(body.parts[0].text).toContain(options.prompt);
-		expect(body.parts[0].text).toContain(JSON.stringify(options.schema, null, 2));
+		expect(body.parts[0].text).toContain(
+			JSON.stringify(options.schema, null, 2),
+		);
 	});
 
 	it.each([
-		{ error: { name: 'UnknownError', data: { message: 'Agent not found: "reviewer"' } } },
-		{ data: { info: { error: { name: 'UnknownError', data: { message: 'Agent not found: "reviewer"' } } } } },
-	])('propagates a missing agent error without attempting a JSON fallback (%#)', async response => {
-		const prompt = vi.fn();
-		await expect(__test__.extractStructuredPromptPayload(
-			{ session: { prompt } } as any,
+		{
+			error: {
+				name: 'UnknownError',
+				data: { message: 'Agent not found: "reviewer"' },
+			},
+		},
+		{
+			data: {
+				info: {
+					error: {
+						name: 'UnknownError',
+						data: { message: 'Agent not found: "reviewer"' },
+					},
+				},
+			},
+		},
+	])(
+		'propagates a missing agent error without attempting a JSON fallback (%#)',
+		async response => {
+			const prompt = vi.fn();
+			await expect(
+				__test__.extractStructuredPromptPayload(
+					{ session: { prompt } } as any,
+					'http://127.0.0.1:4096',
+					'session-1',
+					options,
+					response,
+				),
+			).rejects.toThrow('Agent not found');
+			expect(prompt).not.toHaveBeenCalled();
+		},
+	);
+});
+
+describe('OpenCode repository readiness', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+	it('checks HTTP health and initializes the repository through the SDK directory context', async () => {
+		const fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ healthy: true }),
+		});
+		vi.stubGlobal('fetch', fetch);
+		const get = vi.fn().mockResolvedValue({ data: { directory: '/repo' } });
+		await __test__.waitForRepositoryReady(
+			{ path: { get } } as any,
 			'http://127.0.0.1:4096',
-			'session-1',
-			options,
-			response,
-		)).rejects.toThrow('Agent not found');
-		expect(prompt).not.toHaveBeenCalled();
+			new AbortController().signal,
+			() => '',
+			'/repo',
+		);
+		expect(fetch).toHaveBeenCalledWith(
+			'http://127.0.0.1:4096/global/health',
+			expect.objectContaining({ signal: expect.any(AbortSignal) }),
+		);
+		expect(get).toHaveBeenCalledWith(
+			expect.objectContaining({ signal: expect.any(AbortSignal) }),
+		);
+	});
+
+	it('rejects readiness for a different repository', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue({ ok: true, json: async () => ({ healthy: true }) }),
+		);
+		const get = vi
+			.fn()
+			.mockResolvedValue({ data: { directory: '/other-repo' } });
+		await expect(
+			__test__.waitForRepositoryReady(
+				{ path: { get } } as any,
+				'http://127.0.0.1:4096',
+				new AbortController().signal,
+				() => '',
+				'/repo',
+			),
+		).rejects.toThrow('instead of the requested repository /repo');
+	});
+
+	it('limits repository initialization instead of waiting for the 300-second transport timeout', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue({ ok: true, json: async () => ({ healthy: true }) }),
+		);
+		const get = vi.fn(() => new Promise(() => {}));
+		const promise = __test__.waitForRepositoryReady(
+			{ path: { get } } as any,
+			'http://127.0.0.1:4096',
+			new AbortController().signal,
+			() => 'bootstrapping repository',
+		);
+		const assertion = expect(promise).rejects.toThrow(
+			'OpenCode repository initialization timed out after 60000ms',
+		);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await assertion;
+		expect(get).toHaveBeenCalledTimes(1);
+		expect(get.mock.calls[0][0].signal.aborted).toBe(true);
 	});
 });
 
@@ -91,19 +247,34 @@ describe('opencode client structured output extraction', () => {
 		process.env.OPENAI_API_KEY = 'test-secret-key';
 		try {
 			const transportError = new TypeError('fetch failed', {
-				cause: Object.assign(new Error('socket timed out'), { code: 'ETIMEDOUT' }),
+				cause: Object.assign(new Error('socket timed out'), {
+					code: 'ETIMEDOUT',
+				}),
 			});
-			const operation = vi.fn()
+			const operation = vi
+				.fn()
 				.mockRejectedValueOnce(transportError)
 				.mockResolvedValue({ ok: true });
-			await expect(__test__.withTransportRetry(operation, {
-				label: 'OpenCode structured prompt',
-				getRecentServerOutput: () => 'upstream error test-secret-key',
-			})).resolves.toEqual({ ok: true });
+			await expect(
+				__test__.withTransportRetry(operation, {
+					label: 'OpenCode structured prompt',
+					getRecentServerOutput: () => 'upstream error test-secret-key',
+				}),
+			).resolves.toEqual({ ok: true });
 			expect(operation).toHaveBeenCalledTimes(2);
-			expect(info).toHaveBeenCalledWith(expect.stringMatching(/OpenCode structured prompt attempt 1\/3 started at .*Z\./));
-			expect(warn).toHaveBeenCalledWith(expect.stringMatching(/OpenCode structured prompt attempt 1\/3 failed after \d+ms: TypeError: fetch failed <- caused by socket timed out \(code: ETIMEDOUT\)/));
-			expect(warn).toHaveBeenCalledWith('[warn] OpenCode structured prompt recent server output:\nupstream error [REDACTED]');
+			expect(info).toHaveBeenCalledWith(
+				expect.stringMatching(
+					/OpenCode structured prompt attempt 1\/3 started at .*Z\./,
+				),
+			);
+			expect(warn).toHaveBeenCalledWith(
+				expect.stringMatching(
+					/OpenCode structured prompt attempt 1\/3 failed after \d+ms: TypeError: fetch failed <- caused by socket timed out \(code: ETIMEDOUT\)/,
+				),
+			);
+			expect(warn).toHaveBeenCalledWith(
+				'[warn] OpenCode structured prompt recent server output:\nupstream error [REDACTED]',
+			);
 		} finally {
 			if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
 			else process.env.OPENAI_API_KEY = previousKey;
