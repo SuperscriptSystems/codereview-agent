@@ -151,13 +151,7 @@ describe('OpenCode repository readiness', () => {
 		vi.useRealTimers();
 		vi.unstubAllGlobals();
 	});
-	it('checks HTTP health and initializes the repository through the SDK directory context', async () => {
-		const fetch = vi.fn().mockResolvedValue({
-			ok: true,
-			status: 200,
-			json: async () => ({ healthy: true }),
-		});
-		vi.stubGlobal('fetch', fetch);
+	it('initializes the repository through the SDK directory context', async () => {
 		const get = vi.fn().mockResolvedValue({ data: { directory: '/repo' } });
 		await __test__.waitForRepositoryReady(
 			{ path: { get } } as any,
@@ -165,10 +159,6 @@ describe('OpenCode repository readiness', () => {
 			new AbortController().signal,
 			() => '',
 			'/repo',
-		);
-		expect(fetch).toHaveBeenCalledWith(
-			'http://127.0.0.1:4096/global/health',
-			expect.objectContaining({ signal: expect.any(AbortSignal) }),
 		);
 		expect(get).toHaveBeenCalledWith(
 			expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -218,6 +208,47 @@ describe('OpenCode repository readiness', () => {
 		await assertion;
 		expect(get).toHaveBeenCalledTimes(1);
 		expect(get.mock.calls[0][0].signal.aborted).toBe(true);
+	});
+});
+
+describe('HTTP startup readiness', () => {
+	afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+	const healthy = { ok: true, json: async () => ({ healthy: true, version: '1.18.34' }) };
+	it('retries a timed out first health probe within the startup deadline', async () => {
+		vi.useFakeTimers();
+		const fetch = vi.fn()
+			.mockImplementationOnce((_url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })))
+			.mockResolvedValue(healthy);
+		vi.stubGlobal('fetch', fetch);
+		const promise = __test__.waitForHttpReady('http://127.0.0.1:4096', new AbortController().signal, () => '');
+		const assertion = expect(promise).resolves.toEqual({ healthy: true, version: '1.18.34' });
+		await vi.advanceTimersByTimeAsync(5250);
+		await assertion;
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('retries HTTP 503 instead of treating an open server as ready', async () => {
+		vi.useFakeTimers();
+		const fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue(healthy);
+		vi.stubGlobal('fetch', fetch);
+		const promise = __test__.waitForHttpReady('http://127.0.0.1:4096', new AbortController().signal, () => '');
+		await vi.advanceTimersByTimeAsync(250);
+		await expect(promise).resolves.toMatchObject({ healthy: true });
+		expect(fetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('stops probing when the shared startup budget expires', async () => {
+		vi.useFakeTimers();
+		const controller = new AbortController();
+		const fetch = vi.fn(() => new Promise(() => {}));
+		vi.stubGlobal('fetch', fetch);
+		const promise = __test__.waitForHttpReady('http://127.0.0.1:4096', controller.signal, () => '');
+		const assertion = expect(promise).rejects.toThrow('Shared startup deadline');
+		await vi.advanceTimersByTimeAsync(20);
+		controller.abort(new Error('Shared startup deadline'));
+		await assertion;
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -549,12 +580,20 @@ describe('opencode client structured output extraction', () => {
 
 	it('starts opencode server with project config disabled and explicit config content', () => {
 		const env = __test__.buildOpencodeServerEnv(
-			{ OPENAI_API_KEY: 'test-key' },
+			{ OPENAI_API_KEY: 'test-key', XDG_CONFIG_HOME: '/unsafe', OPENCODE_CONFIG: '/unsafe/opencode.json', OPENCODE_PERMISSION: 'allow', OPENCODE_TEST_HOME: '/unsafe-home' },
 			{ model: 'openai/reviewer-model' },
+			'/isolated',
 		);
 
 		expect(env).toMatchObject({
 			OPENAI_API_KEY: 'test-key',
+			XDG_CONFIG_HOME: '/isolated/config',
+			XDG_DATA_HOME: '/isolated/data',
+			XDG_STATE_HOME: '/isolated/state',
+			OPENCODE_CONFIG_DIR: '/isolated/config/opencode',
+			OPENCODE_TEST_HOME: '/isolated/home',
+			OPENCODE_CONFIG: undefined,
+			OPENCODE_PERMISSION: undefined,
 			OPENCODE_DISABLE_PROJECT_CONFIG: '1',
 			OPENCODE_SERVER_PASSWORD: '',
 			OPENCODE_SERVER_USERNAME: '',

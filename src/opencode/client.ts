@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createConnection, createServer } from 'node:net';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -12,12 +12,13 @@ import {
 	formatTransportError,
 	isRetryableTransportError,
 	runRequest,
+	waitForDelay,
 	withTransportRetry,
 } from './request.js';
 
 const structuredSessionPollAttempts = 12;
 const structuredSessionPollDelayMs = 500;
-const serverStartupTimeoutMs = 30_000;
+const serverStartupTimeoutMs = 60_000;
 const serverStartupPollDelayMs = 100;
 const repositoryReadyTimeoutMs = 60_000;
 
@@ -46,7 +47,7 @@ export interface OpencodeSessionClient {
 	): Promise<T>;
 	abortSession(sessionId: string, signal?: AbortSignal): Promise<void>;
 	deleteSession(sessionId: string): Promise<void>;
-	getDiagnostics(): { recentServerOutput: string };
+	getDiagnostics(): { recentServerOutput: string; serverUrl?: string; serverVersion?: string };
 	close(): Promise<void>;
 }
 
@@ -54,30 +55,38 @@ export async function createSessionClient(
 	config: Record<string, unknown>,
 	directory?: string,
 ): Promise<OpencodeSessionClient> {
-	const port = await getAvailablePort();
-	const server = await startIsolatedOpencodeServer(
-		sanitizeOpencodeServerConfig(config),
-		port,
-	);
-	const client = createOpencodeClient({
-		baseUrl: server.url,
-		directory,
-	});
-	const baseUrl = server.url;
+	const startup = new AbortController();
+	const startupTimer = setTimeout(() => startup.abort(
+		new Error(`OpenCode server startup timed out after ${serverStartupTimeoutMs}ms.`),
+	), serverStartupTimeoutMs);
+	let startedServer: Awaited<ReturnType<typeof startIsolatedOpencodeServer>> | undefined;
 	const lifetime = new AbortController();
+	let client: OpencodeClient;
 	try {
+		const port = await getAvailablePort();
+		startedServer = await startIsolatedOpencodeServer(
+			sanitizeOpencodeServerConfig(config), port, startup.signal,
+		);
+		client = createOpencodeClient({ baseUrl: startedServer.url, directory });
 		await waitForRepositoryReady(
 			client,
-			baseUrl,
-			lifetime.signal,
-			server.getRecentOutput,
+			startedServer.url,
+			startup.signal,
+			startedServer.getRecentOutput,
 			directory,
 		);
 	} catch (error) {
 		lifetime.abort(error);
-		await server.close();
+		if (startedServer) {
+			logger.warn(`OpenCode startup recent server output:\n${startedServer.getRecentOutput()}`);
+			await startedServer.close();
+		}
 		throw error;
+	} finally {
+		clearTimeout(startupTimer);
 	}
+	const server = startedServer;
+	const baseUrl = server.url;
 	const requestSignal = (signal?: AbortSignal) =>
 		signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
 
@@ -256,8 +265,8 @@ export async function createSessionClient(
 				},
 			);
 		},
-		getDiagnostics(): { recentServerOutput: string } {
-			return { recentServerOutput: server.getRecentOutput() };
+		getDiagnostics() {
+			return { recentServerOutput: server.getRecentOutput(), serverUrl: server.url, serverVersion: server.version };
 		},
 	};
 }
@@ -517,7 +526,8 @@ async function fetchSessionMessages(
 async function startIsolatedOpencodeServer(
 	config: Record<string, unknown>,
 	port: number,
-): Promise<{ url: string; close(): Promise<void>; getRecentOutput(): string }> {
+	signal: AbortSignal,
+): Promise<{ url: string; version: string; close(): Promise<void>; getRecentOutput(): string }> {
 	const cwd = await mkdtemp(path.join(tmpdir(), 'code-review-agent-opencode-'));
 	const proc = spawn(
 		'opencode',
@@ -531,7 +541,7 @@ async function startIsolatedOpencodeServer(
 		],
 		{
 			cwd,
-			env: buildOpencodeServerEnv(process.env, config),
+			env: buildOpencodeServerEnv(process.env, config, cwd),
 		},
 	);
 
@@ -546,11 +556,14 @@ async function startIsolatedOpencodeServer(
 		output = (output + text).slice(-64_000);
 	});
 
-	let url: string;
+	const url = `http://127.0.0.1:${port}`;
+	let health: { healthy: true; version: string };
 	try {
-		await waitForServerPort(proc, port, () => output);
-		url = `http://127.0.0.1:${port}`;
+		await waitForServerListening(proc, port, () => output, signal);
+		health = await waitForHttpReady(url, signal, () => output);
+		logger.info(`OpenCode server version: ${health.version}.`);
 	} catch (error) {
+		if (output) logger.warn(`OpenCode startup server output:\n${formatRecentServerOutput(output)}`);
 		await shutdownChildProcess(proc);
 		await rm(cwd, { recursive: true, force: true });
 		throw error;
@@ -558,6 +571,7 @@ async function startIsolatedOpencodeServer(
 
 	return {
 		url,
+		version: health.version,
 		getRecentOutput(): string {
 			return formatRecentServerOutput(output);
 		},
@@ -575,28 +589,6 @@ async function waitForRepositoryReady(
 	getRecentServerOutput: () => string,
 	expectedDirectory?: string,
 ): Promise<void> {
-	await runRequest(
-		async requestSignal => {
-			const response = await fetch(`${baseUrl}/global/health`, {
-				signal: requestSignal,
-			});
-			if (
-				!response.ok ||
-				!((await response.json()) as { healthy?: boolean }).healthy
-			) {
-				throw new Error(
-					`OpenCode health check failed: HTTP ${response.status}.`,
-				);
-			}
-		},
-		{
-			signal,
-			label: 'OpenCode API health',
-			timeoutMs: 5000,
-			retry: false,
-			getRecentServerOutput,
-		},
-	);
 	const data = await runRequest(
 		async requestSignal => {
 			const response = await client.path.get({ signal: requestSignal });
@@ -631,12 +623,49 @@ async function waitForRepositoryReady(
 	logger.info(`OpenCode repository ready: ${data.directory}.`);
 }
 
+async function waitForHttpReady(
+	baseUrl: string,
+	signal: AbortSignal,
+	getRecentServerOutput: () => string,
+): Promise<{ healthy: true; version: string }> {
+	return await runRequest(async startupSignal => {
+		let attempt = 0;
+		while (true) {
+			startupSignal.throwIfAborted();
+			attempt += 1;
+			try {
+				return await runRequest(async requestSignal => {
+					const response = await fetch(`${baseUrl}/global/health`, { signal: requestSignal });
+					if (!response.ok) throw new Error(`HTTP ${response.status}`);
+					const health = await response.json() as { healthy?: boolean; version?: string };
+					if (!health.healthy || typeof health.version !== 'string') {
+						throw new Error('OpenCode returned an invalid health response.');
+					}
+					return { healthy: true as const, version: health.version };
+				}, { signal: startupSignal, label: 'OpenCode health probe', timeoutMs: 5000, retry: false, quiet: true });
+			} catch (error) {
+				startupSignal.throwIfAborted();
+				logger.info(`OpenCode API is not ready (probe ${attempt}: ${formatTransportError(error)}); retrying within the startup deadline.`);
+				await waitForDelay(250, startupSignal);
+			}
+		}
+	}, { signal, label: 'OpenCode API health', timeoutMs: serverStartupTimeoutMs, retry: false, getRecentServerOutput });
+}
+
 function buildOpencodeServerEnv(
 	baseEnv: NodeJS.ProcessEnv,
 	config: Record<string, unknown>,
+	isolatedDirectory: string,
 ): NodeJS.ProcessEnv {
 	return {
 		...baseEnv,
+		XDG_CONFIG_HOME: path.join(isolatedDirectory, 'config'),
+		XDG_DATA_HOME: path.join(isolatedDirectory, 'data'),
+		XDG_STATE_HOME: path.join(isolatedDirectory, 'state'),
+		OPENCODE_TEST_HOME: path.join(isolatedDirectory, 'home'),
+		OPENCODE_CONFIG: undefined,
+		OPENCODE_CONFIG_DIR: path.join(isolatedDirectory, 'config', 'opencode'),
+		OPENCODE_PERMISSION: undefined,
 		OPENCODE_DISABLE_PROJECT_CONFIG: '1',
 		OPENCODE_SERVER_PASSWORD: '',
 		OPENCODE_SERVER_USERNAME: '',
@@ -644,27 +673,30 @@ function buildOpencodeServerEnv(
 	};
 }
 
-async function waitForServerPort(
+async function waitForServerListening(
 	proc: ReturnType<typeof spawn>,
 	port: number,
 	getOutput: () => string,
+	signal: AbortSignal,
 ): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		let settled = false;
 		let pollTimer: NodeJS.Timeout | undefined;
-		let timeoutTimer: NodeJS.Timeout | undefined;
+		const onError = (error: Error) => finish(error);
+		const onExit = (code: number | null) => finish(new Error(`OpenCode server exited with code ${code}${formatServerOutput(getOutput())}`));
+		const onAbort = () => finish(signal.reason);
 		const finish = (error?: Error): void => {
 			if (settled) {
 				return;
 			}
 
 			settled = true;
-			if (timeoutTimer) {
-				clearTimeout(timeoutTimer);
-			}
 			if (pollTimer) {
 				clearTimeout(pollTimer);
 			}
+			proc.off('error', onError);
+			proc.off('exit', onExit);
+			signal.removeEventListener('abort', onAbort);
 
 			if (error) {
 				reject(error);
@@ -672,24 +704,12 @@ async function waitForServerPort(
 				resolve();
 			}
 		};
-		timeoutTimer = setTimeout(() => {
-			finish(
-				new Error(
-					`Timeout waiting for OpenCode server startup on port ${port}${formatServerOutput(getOutput())}`,
-				),
-			);
-		}, serverStartupTimeoutMs);
-		const poll = async (): Promise<void> => {
+		const poll = (): void => {
 			if (settled) {
 				return;
 			}
 
-			const connected = await canConnectToPort(port);
-			if (settled) {
-				return;
-			}
-
-			if (connected) {
+			if (getOutput().includes(`opencode server listening on http://127.0.0.1:${port}`)) {
 				finish();
 				return;
 			}
@@ -697,34 +717,11 @@ async function waitForServerPort(
 			pollTimer = setTimeout(poll, serverStartupPollDelayMs);
 		};
 
-		proc.once('error', error => finish(error));
-		proc.once('exit', code => {
-			finish(
-				new Error(
-					`OpenCode server exited with code ${code}${formatServerOutput(getOutput())}`,
-				),
-			);
-		});
-		void poll();
-	});
-}
-
-async function canConnectToPort(port: number): Promise<boolean> {
-	return await new Promise(resolve => {
-		const socket = createConnection({ host: '127.0.0.1', port });
-		let settled = false;
-		const finish = (connected: boolean): void => {
-			if (settled) {
-				return;
-			}
-
-			settled = true;
-			socket.destroy();
-			resolve(connected);
-		};
-
-		socket.once('connect', () => finish(true));
-		socket.once('error', () => finish(false));
+		proc.once('error', onError);
+		proc.once('exit', onExit);
+		signal.addEventListener('abort', onAbort, { once: true });
+		if (signal.aborted) onAbort();
+		else poll();
 	});
 }
 
@@ -1345,6 +1342,7 @@ function extractTextFromParts(
 export type { OpencodeClient };
 
 export const __test__ = {
+	waitForHttpReady,
 	waitForRepositoryReady,
 	extractStructuredPromptPayload,
 	formatRecentServerOutput,

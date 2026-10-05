@@ -804,6 +804,17 @@ describe('review command', () => {
 		);
 	});
 
+	it('classifies the shared server startup timeout without starting a review', async () => {
+		parseConfigMock.mockReturnValue({ review: buildReviewConfig({ failOpen: true }) });
+		getDiffMock.mockResolvedValue('diff');
+		parseChangedFilesFromDiffMock.mockReturnValue({ 'src/app.ts': 'diff' });
+		getCommitMessagesMock.mockResolvedValue('commit');
+		createSessionClientMock.mockRejectedValue(new Error('OpenCode server startup timed out after 60000ms.'));
+		await runReviewCommand({ repoPath: '/repo', baseRef: 'main', headRef: 'HEAD', staged: false, trace: false });
+		expect(runReviewMock).not.toHaveBeenCalled();
+		expect(loggerFns.warn).toHaveBeenCalledWith('Review failure category: server startup timeout.');
+	});
+
 	it('does not depend on legacy context expansion imports in the primary path', async () => {
 		const commandSource = await import('node:fs/promises').then(
 			({ readFile }) =>

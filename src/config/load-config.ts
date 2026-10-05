@@ -39,6 +39,7 @@ export async function loadRawConfig(
 	try {
 		opencodeConfig = await readJsonFile(fallbackConfigPath);
 		configDir = path.dirname(fallbackConfigPath);
+		logger.info(`OpenCode runtime config: ${fallbackConfigPath}`);
 	} catch (fallbackError) {
 		logger.warn(
 			`Could not load bundled reviewer-opencode.json at ${fallbackConfigPath}. Using defaults.`,

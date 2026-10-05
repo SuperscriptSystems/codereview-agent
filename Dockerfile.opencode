@@ -4,7 +4,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g opencode-ai@1.14.48
+RUN npm install -g opencode-ai@1.18.34
 
 WORKDIR /app
 
@@ -15,5 +15,7 @@ COPY prompts ./prompts
 RUN npm ci
 
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
+
+RUN npm run check:opencode-server
 
 ENTRYPOINT ["npx", "tsx", "src/cli.ts"]

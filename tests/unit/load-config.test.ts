@@ -75,5 +75,6 @@ describe('loadRawConfig', () => {
 			batchTimeoutMs: 12345,
 		});
 		expect(rawConfig.__configDir).toBe(path.dirname(bundledConfigPath));
+		expect(loggerFns.info).toHaveBeenCalledWith(`OpenCode runtime config: ${bundledConfigPath}`);
 	});
 });

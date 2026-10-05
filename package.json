@@ -11,12 +11,13 @@
     "dev": "tsx src/cli.ts",
     "review": "tsx src/cli.ts review",
     "check:reviewer": "tsx src/cli.ts check-reviewer",
+    "check:opencode-server": "tsx src/opencode/check-server.ts",
     "assess": "tsx src/cli.ts assess",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.14.48",
+    "@opencode-ai/sdk": "1.18.34",
     "commander": "^13.1.0",
     "dotenv": "^16.4.7",
     "execa": "^9.5.2",

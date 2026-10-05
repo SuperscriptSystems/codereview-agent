@@ -27,10 +27,11 @@ type Message = {
 		finish?: string;
 		structured?: unknown;
 		structured_output?: unknown;
+		format?: unknown;
 		time?: { completed?: number };
 		error?: { name?: string; message?: string; data?: { message?: string } };
 	};
-	parts: Array<{ type: string; tool?: string; state?: { status?: string } }>;
+	parts: Array<{ id?: string; messageID?: string; type: string; text?: string; tool?: string; state?: { status?: string } }>;
 };
 
 /** Submit one turn once; a lost HTTP response must never enqueue the prompt again. */
@@ -55,7 +56,7 @@ export async function runAsyncPrompt(
 		: controller.signal;
 	const messageId = `msg_${(BigInt(Date.now()) * 4096n).toString(16).padStart(12, '0')}${randomBytes(7).toString('hex')}`;
 	const startedAt = Date.now();
-	const observer = observeSessionErrors(client, sessionId, signal, error =>
+	const observer = observeSessionErrors(client, sessionId, messageId, signal, error =>
 		controller.abort(error),
 	);
 	try {
@@ -82,6 +83,7 @@ export async function runAsyncPrompt(
 			`${options.label} accepted; session ${sessionId}, message ${messageId}.`,
 		);
 		let lastProgressAt = 0;
+		let useEventsOnly = false;
 		while (true) {
 			signal.throwIfAborted();
 			observer.throwIfFailed();
@@ -105,26 +107,34 @@ export async function runAsyncPrompt(
 					continue;
 				}
 			}
-			const messageResponse = await runRequest(
-				requestSignal =>
-					client.session.messages({
-						path: { id: sessionId },
-						signal: requestSignal,
-					}),
-				{ ...options, signal, label: 'OpenCode session messages', quiet: true },
-			);
-			const messages = assertResponse(
-				messageResponse,
-				'read session messages',
-			) as Message[];
-			if (!Array.isArray(messages))
-				throw new Error('OpenCode returned invalid session messages.');
+			let messages = observer.messages();
+			if (messages.length === 0 && !useEventsOnly) {
+				try {
+					const messageResponse = await runRequest(
+						requestSignal => client.session.messages({ path: { id: sessionId }, signal: requestSignal }),
+						{ ...options, signal, label: 'OpenCode session messages', quiet: true },
+					);
+					messages = assertResponse(messageResponse, 'read session messages') as Message[];
+					if (!Array.isArray(messages)) throw new Error('OpenCode returned invalid session messages.');
+				} catch (error) {
+					// OpenCode 1.18.x cannot encode persisted OutputFormatJsonSchema on message GET.
+					// Native SSE events retain the same schema and results without that wire codec.
+					if (!(error instanceof Error) || !error.message.includes('Expected OutputFormatJsonSchema')) throw error;
+					useEventsOnly = true;
+					logger.info('OpenCode message-list JSON schema codec is incompatible; reading the current turn from native session events.');
+					messages = observer.messages();
+				}
+			}
 			observer.throwIfFailed();
+			if (body.noReply === true && (!status || status.type === 'idle')) {
+				const user = messages.find(message => message.info.role === 'user' && message.info.id === messageId);
+				if (user && user.parts.length > 0) return { data: user };
+			}
 			// Other turns (including an earlier JSON fallback) cannot satisfy this request.
 			const matching = messages.filter(
 				message =>
 					message.info.role === 'assistant' &&
-					message.info.parentID === messageId,
+				message.info.parentID === messageId,
 			);
 			const latest = matching.at(-1);
 			if ((!status || status.type === 'idle') && latest?.info.time?.completed) {
@@ -199,8 +209,9 @@ function assertResponse(response: unknown, action: string): unknown {
 		response?: { status?: number };
 	};
 	if (result?.error) {
+		const detail = result.error instanceof Error ? result.error.message : JSON.stringify(result.error);
 		throw new Error(
-			`OpenCode failed to ${action}: ${JSON.stringify(result.error)}${result.response?.status ? ` (HTTP ${result.response.status})` : ''}`,
+			`OpenCode failed to ${action}: ${detail}${result.response?.status ? ` (HTTP ${result.response.status})` : ''}`,
 		);
 	}
 	return result?.data;
@@ -209,12 +220,16 @@ function assertResponse(response: unknown, action: string): unknown {
 function observeSessionErrors(
 	client: OpencodeClient,
 	sessionId: string,
+	messageId: string,
 	signal: AbortSignal,
 	onFailure: (error: unknown) => void,
 ) {
 	let failure: unknown;
 	let resolveReady!: () => void;
 	let rejectReady!: (error: unknown) => void;
+	let user: Message | undefined;
+	let assistant: Message | undefined;
+	const parts = new Map<string, Message['parts'][number]>();
 	const ready = new Promise<void>((resolve, reject) => {
 		resolveReady = resolve;
 		rejectReady = reject;
@@ -233,6 +248,7 @@ function observeSessionErrors(
 			onSseError: fail,
 		});
 		for await (const event of events.stream) {
+			if (signal.aborted) break;
 			if (event.type === 'server.connected') resolveReady();
 			if (
 				event.type === 'session.error' &&
@@ -244,6 +260,33 @@ function observeSessionErrors(
 					),
 				);
 			}
+			if (event.type === 'message.updated') {
+				const info = event.properties.info as unknown as Message['info'] & { sessionID: string; time: { created: number; completed?: number } };
+				if (info.sessionID !== sessionId) continue;
+				if (info.role === 'user' && info.id === messageId) user = { info, parts: [] };
+				if (info.role === 'assistant' && info.parentID === messageId) {
+					const previousCreated = (assistant?.info.time as { created?: number } | undefined)?.created ?? 0;
+					if (!assistant || info.id === assistant.info.id || info.time.created > previousCreated ||
+						(info.time.created === previousCreated && info.id > assistant.info.id)) {
+						if (assistant && assistant.info.id !== info.id) {
+							for (const [id, part] of parts) if (part.messageID === assistant.info.id) parts.delete(id);
+						}
+						assistant = { info, parts: [] };
+					}
+				}
+			}
+			if (event.type === 'message.part.updated') {
+				const part = event.properties.part;
+				if (part.sessionID !== sessionId || (part.messageID !== messageId && part.messageID !== assistant?.info.id)) continue;
+				if (part.type === 'text') parts.set(part.id, { id: part.id, messageID: part.messageID, type: 'text', text: part.text });
+				if (part.type === 'tool') parts.set(part.id, { id: part.id, messageID: part.messageID, type: 'tool', tool: part.tool, state: { status: part.state.status } });
+			}
+			// Some server versions stream text increments between full part updates.
+			const deltaEvent = event as unknown as { type: string; properties: { sessionID?: string; partID?: string; field?: string; delta?: string } };
+			if (deltaEvent.type === 'message.part.delta' && deltaEvent.properties.sessionID === sessionId && deltaEvent.properties.field === 'text') {
+				const part = parts.get(deltaEvent.properties.partID ?? '');
+				if (part?.type === 'text') part.text = (part.text ?? '') + (deltaEvent.properties.delta ?? '');
+			}
 		}
 		if (!signal.aborted)
 			fail(
@@ -252,6 +295,8 @@ function observeSessionErrors(
 	})().catch(fail);
 	return {
 		ready,
+		messages: () => [user, assistant].filter((message): message is Message => Boolean(message))
+			.map(message => ({ info: message.info, parts: [...parts.values()].filter(part => part.messageID === message.info.id) })),
 		throwIfFailed: () => {
 			if (failure) throw failure;
 		},

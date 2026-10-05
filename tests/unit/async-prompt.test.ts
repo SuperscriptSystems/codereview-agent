@@ -48,9 +48,10 @@ function makeClient(eventError?: string) {
 		return {
 			info: {
 				id: 'msg-assistant',
+				sessionID: 'session-1',
 				role: 'assistant',
 				parentID: currentMessageId,
-				time: { completed: 1 },
+				time: { created: 1, completed: 1 },
 				finish: 'stop',
 				structured: { issues: [] },
 				...overrides,
@@ -58,7 +59,7 @@ function makeClient(eventError?: string) {
 			parts: [],
 		};
 	}
-	return { client, result };
+	return { client, result, submitted };
 }
 
 describe('async OpenCode prompts', () => {
@@ -99,6 +100,47 @@ describe('async OpenCode prompts', () => {
 			/^msg_/,
 		);
 		expect(client.event.subscribe.mock.calls[0][0].signal.aborted).toBe(true);
+	});
+
+	it.each([false, true])('reads native events when REST rejects inline schemas (text deltas: %s)', async textDeltas => {
+		const { client, result, submitted } = makeClient();
+		let releaseEvents!: () => void;
+		const released = new Promise<void>(resolve => { releaseEvents = resolve; });
+		const findings = { issues: [{ filePath: 'src/app.ts', lineNumber: 1, issueType: 'Security', comment: 'Missing tenant isolation.' }] };
+		client.session.messages.mockImplementation(async () => {
+			releaseEvents();
+			return { error: new Error('Expected OutputFormatJsonSchema, got inline schema'), response: { status: 400 } } as any;
+		});
+		client.event.subscribe.mockImplementation(async ({ signal }) => ({ stream: (async function* () {
+			yield { type: 'server.connected', properties: {} };
+			await submitted;
+			await released;
+			yield { type: 'message.updated', properties: { info: result({ structured: undefined, finish: undefined, time: { created: 2 } }).info } };
+			if (textDeltas) {
+				yield { type: 'message.part.updated', properties: { part: { id: 'part-1', messageID: 'msg-assistant', sessionID: 'session-1', type: 'text', text: 'BEGIN_JSON\n' } } };
+				yield { type: 'message.part.delta', properties: { sessionID: 'session-1', partID: 'part-1', field: 'text', delta: JSON.stringify(findings) + '\nEND_JSON' } };
+			}
+			yield { type: 'message.updated', properties: { info: result({ structured: textDeltas ? undefined : findings, time: { created: 2, completed: 3 } }).info } };
+			// A delayed update from an earlier assistant iteration must not replace the result.
+			yield { type: 'message.updated', properties: { info: result({ id: 'old-assistant', structured: { issues: [] }, time: { created: 1, completed: 2 } }).info } };
+			if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+		})() } as any));
+		const response = await runAsyncPrompt(client as any, 'session-1', body, options);
+		if (textDeltas) {
+			expect(response.data.parts[0].text).toBe(`BEGIN_JSON\n${JSON.stringify(findings)}\nEND_JSON`);
+		} else {
+			expect(response.data.info.structured).toEqual(findings);
+		}
+		expect(client.session.messages).toHaveBeenCalledTimes(1);
+		expect(client.session.promptAsync).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not treat unrelated message API errors as schema-codec incompatibility', async () => {
+		const { client } = makeClient();
+		client.session.messages.mockResolvedValue({ error: new Error('Unauthorized'), response: { status: 401 } } as any);
+		await expect(runAsyncPrompt(client as any, 'session-1', body, options)).rejects.toThrow('Unauthorized');
+		expect(client.session.promptAsync).toHaveBeenCalledTimes(1);
+		expect(client.session.abort).toHaveBeenCalledTimes(1);
 	});
 
 	it('ignores earlier turns and completed tool calls until this turn finishes', async () => {

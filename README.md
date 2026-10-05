@@ -53,6 +53,8 @@ npm run assess -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 
 OpenCode runtime settings always come from the bundled `reviewer-opencode.json`.
 
+The server and SDK are pinned to **1.18.34**. Each server runs with isolated OpenCode home, config, data, and state directories. The bundled configuration is passed through `OPENCODE_CONFIG_CONTENT`; inherited `OPENCODE_CONFIG` and permission overrides, repo-local `opencode.json`, and home-directory `.opencode` profiles do not configure the reviewer. Startup logs identify the bundled file and the actual server version.
+
 Reviews start directly with the configured `reviewer` agent, using OpenCode's native model-specific system prompt. Review scope, reporting criteria, and the JSON output format are passed as the review task rather than a replacement system prompt. If OpenCode reports that `reviewer` is missing, the run switches to the built-in `general` agent with the same task and read-only permissions, and uses it for subsequent batches. Agent discovery is performed by `check-reviewer` only.
 
 Reviewer-specific settings live in repo-local `review-config.json` when present, with bundled fallback defaults.
@@ -63,9 +65,11 @@ The contents of `reviewer-instructions.md` are explicitly included in every batc
 
 JSON output is requested through OpenCode's `json_schema` format and validated against the review schema. Native structured results are used immediately; a plain-text JSON fallback is requested only when the response contains no usable structured or JSON payload.
 
+Current-turn SSE message/part events are preferred for results. OpenCode 1.18.x can reject persisted inline JSON formats on the message-list endpoint (`Expected OutputFormatJsonSchema`, [upstream issue](https://github.com/anomalyco/opencode/issues/26929)); the client continues from the native events without removing the schema or resubmitting the review.
+
 ## Review timing and diagnostics
 
-- Startup checks HTTP health and initializes the target repository through `/path` before starting a review. Repository initialization has a 60-second deadline; ordinary API requests have a 15-second deadline.
+- Startup has a shared 60-second deadline for launching the process, HTTP readiness, and initializing the target repository through `/path`. Health probes have a 5-second limit and are retried within that budget. Readiness requires an HTTP response rather than a bare TCP connection; ordinary API requests have a 15-second deadline.
 - Prompts use OpenCode's asynchronous API. Each turn is submitted once and its result is matched by message ID, using session status and events to wait for completion. A long analysis does not cause the prompt to be resubmitted after a 300-second HTTP headers timeout.
 - The configured batch timeout includes session creation, analysis, and JSON formatting. The total review timeout cancels the active batch and prevents subsequent batches from starting.
 - CI logs show stage timings and prompt progress every 30 seconds, including active tools and provider retry status. Internal OpenCode debug logs are captured in a bounded, secret-redacted buffer and included when a request fails. Client shutdown cancels pending work and retries.
@@ -91,6 +95,14 @@ Optional integrations use these environment variables:
 npm test
 npm run build
 ```
+
+With `opencode-ai@1.18.34` installed, verify the actual server protocol and configuration:
+
+```bash
+npm run check:opencode-server
+```
+
+This check starts the real OpenCode binary with isolated configuration, checks session creation and inline JSON schema events, and exercises native `StructuredOutput` with a loopback mock provider. It makes no external model calls. `Dockerfile.opencode` runs this check during image build so a broken server/API combination fails before deployment.
 
 ## 🔄 CI/CD Integration
 

@@ -376,6 +376,12 @@ function describeReviewFailure(error: unknown): string[] {
 			'OpenCode did not initialize the repository before the startup deadline. Inspect the recent internal server logs for the blocked bootstrap step.',
 		];
 	}
+	if (message.includes('OpenCode server startup timed out') || message.includes('OpenCode API health timed out')) {
+		return [
+			'Review failure category: server startup timeout.',
+			'OpenCode did not become HTTP-ready within the shared startup deadline. Inspect the recent internal server logs; the review has not started.',
+		];
+	}
 
 	if (message.includes('Review batch timed out after')) {
 		const details = isReviewBatchTimeoutError(error) ? error.details : null;
