@@ -1,6 +1,69 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { __test__ } from '../../src/opencode/client.js';
+import { reviewIssuesEnvelopeJsonSchema } from '../../src/core/models.js';
+
+describe('opencode structured prompt responses', () => {
+	const options = {
+		agent: 'reviewer',
+		prompt: 'Review the diff.\n<BEGIN_REPOSITORY_INSTRUCTIONS>\nCheck Team isolation.\n<END_REPOSITORY_INSTRUCTIONS>',
+		schema: reviewIssuesEnvelopeJsonSchema,
+	};
+	const payload = {
+		issues: [{ filePath: 'src/app.ts', lineNumber: 1, issueType: 'Security', comment: 'Team isolation missing.' }],
+	};
+
+	it.each([
+		{ info: { structured_output: payload }, parts: [] },
+		{ data: { info: { structured: payload }, parts: [{ type: 'text', text: 'No issues found.' }] } },
+	])('returns native structured findings without an additional prompt (%#)', async response => {
+		const prompt = vi.fn();
+		const messages = vi.fn();
+		await expect(__test__.extractStructuredPromptPayload(
+			{ session: { prompt, messages } } as any,
+			'http://127.0.0.1:4096',
+			'session-1',
+			options,
+			response,
+		)).resolves.toEqual(payload);
+		expect(prompt).not.toHaveBeenCalled();
+		expect(messages).not.toHaveBeenCalled();
+	});
+
+	it('preserves the task and project rules when JSON formatting requires a fallback', async () => {
+		const prompt = vi.fn().mockResolvedValue({
+			data: { parts: [{ type: 'text', text: `BEGIN_JSON\n${JSON.stringify(payload)}\nEND_JSON` }] },
+		});
+		await expect(__test__.extractStructuredPromptPayload(
+			{ session: { prompt } } as any,
+			'http://127.0.0.1:4096',
+			'session-1',
+			options,
+			{ data: { parts: [{ type: 'text', text: 'Could not format the review result.' }] } },
+		)).resolves.toEqual(payload);
+		expect(prompt).toHaveBeenCalledTimes(1);
+		const body = prompt.mock.calls[0][0].body;
+		expect(body.agent).toBe('reviewer');
+		expect(body.system).toBeUndefined();
+		expect(body.parts[0].text).toContain(options.prompt);
+		expect(body.parts[0].text).toContain(JSON.stringify(options.schema, null, 2));
+	});
+
+	it.each([
+		{ error: { name: 'UnknownError', data: { message: 'Agent not found: "reviewer"' } } },
+		{ data: { info: { error: { name: 'UnknownError', data: { message: 'Agent not found: "reviewer"' } } } } },
+	])('propagates a missing agent error without attempting a JSON fallback (%#)', async response => {
+		const prompt = vi.fn();
+		await expect(__test__.extractStructuredPromptPayload(
+			{ session: { prompt } } as any,
+			'http://127.0.0.1:4096',
+			'session-1',
+			options,
+			response,
+		)).rejects.toThrow('Agent not found');
+		expect(prompt).not.toHaveBeenCalled();
+	});
+});
 
 describe('opencode client structured output extraction', () => {
 	it('shows the underlying transport timeout code without exposing credentials', () => {

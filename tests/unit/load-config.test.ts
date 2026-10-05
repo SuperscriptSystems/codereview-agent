@@ -55,6 +55,17 @@ describe('loadRawConfig', () => {
 		) as Record<string, unknown>;
 
 		expect(rawConfig.model).toBe(bundledConfig.model);
+		const agents = rawConfig.agent as Record<string, Record<string, unknown>>;
+		for (const name of ['reviewer', 'general']) {
+			expect(agents[name]).not.toHaveProperty('prompt');
+			expect(agents[name].permission).toMatchObject({
+				edit: 'deny',
+				read: 'allow',
+				glob: 'allow',
+				grep: 'allow',
+				bash: { '*': 'deny', 'git diff*': 'allow' },
+			});
+		}
 		expect(rawConfig).not.toMatchObject({
 			model: 'openai/should-not-be-used',
 			instructions: ['repo-local.md'],

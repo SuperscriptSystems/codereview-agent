@@ -53,9 +53,15 @@ npm run assess -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 
 OpenCode runtime settings always come from the bundled `reviewer-opencode.json`.
 
+Reviews start directly with the configured `reviewer` agent, using OpenCode's native model-specific system prompt. Review scope, reporting criteria, and the JSON output format are passed as the review task rather than a replacement system prompt. If OpenCode reports that `reviewer` is missing, the run switches to the built-in `general` agent with the same task and read-only permissions, and uses it for subsequent batches. Agent discovery is performed by `check-reviewer` only.
+
 Reviewer-specific settings live in repo-local `review-config.json` when present, with bundled fallback defaults.
 
 Repositories can provide additional review criteria in a root-level `reviewer-instructions.md`. Range and pull-request reviews load the file from the trusted base ref; staged reviews load it from `HEAD`. Missing or empty files leave the standard reviewer behavior unchanged. The file must be a regular file no larger than 64 KiB and cannot override review scope, tool restrictions, security requirements, or the structured output format.
+
+The contents of `reviewer-instructions.md` are explicitly included in every batch's review task, including fallback requests to `general`, so OpenCode receives the project-specific criteria alongside the diff.
+
+JSON output is requested through OpenCode's `json_schema` format and validated against the review schema. Native structured results are used immediately; a plain-text JSON fallback is requested only when the response contains no usable structured or JSON payload.
 
 Key config fields:
 

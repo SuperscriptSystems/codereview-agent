@@ -50,6 +50,7 @@ describe("check-reviewer command", () => {
     expect(sessionClient.promptStructured).toHaveBeenCalledWith("session-1", expect.objectContaining({
       agent: "reviewer",
     }))
+    expect(sessionClient.promptStructured.mock.calls[0][1]).not.toHaveProperty("system")
     expect(loggerFns.info).toHaveBeenCalledWith("Reviewer connectivity check passed.")
     expect(sessionClient.close).toHaveBeenCalled()
   })
@@ -61,8 +62,8 @@ describe("check-reviewer command", () => {
 
     expect(sessionClient.promptStructured).toHaveBeenCalledWith("session-1", expect.objectContaining({
       agent: "general",
-      system: expect.stringContaining("You are a ready-to-use code reviewer."),
     }))
+    expect(sessionClient.promptStructured.mock.calls[0][1]).not.toHaveProperty("system")
     expect(loggerFns.error).toHaveBeenCalledWith(
       "Custom reviewer agent is unavailable. Fallback via 'general' succeeded, but reviewer registration is missing. Available agents: general, plan",
     )
@@ -80,8 +81,12 @@ describe("check-reviewer command", () => {
     expect(sessionClient.promptStructured).toHaveBeenNthCalledWith(1, "session-1", expect.objectContaining({ agent: "reviewer" }))
     expect(sessionClient.promptStructured).toHaveBeenNthCalledWith(2, "session-1", expect.objectContaining({
       agent: "general",
-      system: expect.stringContaining("You are a ready-to-use code reviewer."),
     }))
+    expect(sessionClient.promptStructured.mock.calls[1][1]).toEqual({
+      ...sessionClient.promptStructured.mock.calls[0][1],
+      agent: "general",
+    })
+    expect(sessionClient.promptStructured.mock.calls[1][1]).not.toHaveProperty("system")
     expect(loggerFns.error).toHaveBeenCalledWith(
       "Custom reviewer agent is unavailable. Fallback via 'general' succeeded, but reviewer registration is missing.",
     )

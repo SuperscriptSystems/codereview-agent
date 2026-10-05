@@ -4,7 +4,7 @@ import { loadRawConfig } from "../config/load-config.js"
 import { configureLogger, logger } from "../core/logger.js"
 import { reviewIssuesEnvelopeJsonSchema, reviewIssuesEnvelopeSchema } from "../core/models.js"
 import { createSessionClient } from "../opencode/client.js"
-import { isMissingAgentError, resolveReviewAgent, reviewerSystemPrompt } from "../review/reviewer.js"
+import { isMissingAgentError, resolveReviewAgent } from "../review/reviewer.js"
 
 export interface CheckReviewerCommandOptions {
   repoPath: string
@@ -54,7 +54,6 @@ async function promptReviewerCheck(
     return {
       payload: await client.promptStructured(sessionId, {
         agent: resolvedAgent.name,
-        system: resolvedAgent.system,
         prompt,
         schema: reviewIssuesEnvelopeJsonSchema,
       }),
@@ -68,7 +67,6 @@ async function promptReviewerCheck(
     return {
       payload: await client.promptStructured(sessionId, {
         agent: "general",
-        system: reviewerSystemPrompt,
         prompt,
         schema: reviewIssuesEnvelopeJsonSchema,
       }),

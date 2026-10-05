@@ -15,7 +15,23 @@
 			"description": "Reviews changed code for concrete bugs and risks",
 			"mode": "all",
 			"temperature": 0.1,
-			"prompt": "{file:./prompts/reviewer.md}",
+			"permission": {
+				"edit": "deny",
+				"read": "allow",
+				"glob": "allow",
+				"grep": "allow",
+				"bash": {
+					"*": "deny",
+					"git diff*": "allow",
+					"git log*": "allow",
+					"git show*": "allow",
+					"git status*": "allow",
+					"git rev-parse*": "allow"
+				}
+			}
+		},
+		"general": {
+			"temperature": 0.1,
 			"permission": {
 				"edit": "deny",
 				"read": "allow",

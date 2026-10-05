@@ -178,66 +178,13 @@ export async function createSessionClient(
 				},
 			);
 
-			const info = getStructuredOutputInfo(response);
-			if (info?.error?.name === 'StructuredOutputError') {
-				throw new Error(
-					info.error.message ?? 'OpenCode structured output validation failed.',
-				);
-			}
-
-			const textFallback = extractStructuredPayloadFromText<T>(response);
-			if (textFallback !== null) {
-				return textFallback;
-			}
-
-			const noIssuesTextFallback = extractNoIssuesPayloadFromText<T>(
-				response,
-				options.schema,
-			);
-			if (noIssuesTextFallback !== null) {
-				return noIssuesTextFallback;
-			}
-
-			const plainTextFallback = await promptStructuredViaTextFallback<T>(
+			return await extractStructuredPromptPayload<T>(
 				client,
 				baseUrl,
 				sessionId,
 				options,
+				response,
 			);
-			if (plainTextFallback !== null) {
-				return plainTextFallback;
-			}
-
-			const sessionFallback = await extractStructuredPayloadFromSession<T>(
-				client,
-				baseUrl,
-				sessionId,
-				options.schema,
-			);
-			if (sessionFallback !== null) {
-				return sessionFallback;
-			}
-
-			if (info?.structured_output === undefined) {
-				const promptText = extractPromptText(response);
-				const sessionDetails = await describeSessionStructuredState(
-					client,
-					baseUrl,
-					sessionId,
-				);
-				const details = promptText
-					? ` Raw response text: ${truncateText(promptText, 400)}`
-					: '';
-				throw new Error(
-					buildOpencodeErrorMessage(
-						'run a structured prompt',
-						response,
-						`OpenCode did not return a structured output payload.${details}${sessionDetails ? ` Session state: ${sessionDetails}` : ''}`,
-					),
-				);
-			}
-
-			return info.structured_output as T;
 		},
 		async close(): Promise<void> {
 			await server.close();
@@ -261,6 +208,75 @@ export async function createSessionClient(
 			return { recentServerOutput: server.getRecentOutput() };
 		},
 	};
+}
+
+async function extractStructuredPromptPayload<T>(
+	client: OpencodeClient,
+	baseUrl: string,
+	sessionId: string,
+	options: Parameters<OpencodeSessionClient['promptStructured']>[1],
+	response: unknown,
+): Promise<T> {
+	const responseError = getResponseErrorMessage(response);
+	if (responseError) {
+		throw new Error(
+			buildOpencodeErrorMessage('run a structured prompt', response, responseError),
+		);
+	}
+	const info = getStructuredOutputInfo(response);
+	if (info?.error) {
+		throw new Error(
+			info.error.message ?? 'OpenCode structured output validation failed.',
+		);
+	}
+	// A native structured response needs no extra model turn to reformat it.
+	if (info?.structured_output !== undefined) {
+		return info.structured_output as T;
+	}
+
+	const textFallback = extractStructuredPayloadFromText<T>(response);
+	if (textFallback !== null) {
+		return textFallback;
+	}
+
+	const noIssuesTextFallback = extractNoIssuesPayloadFromText<T>(
+		response,
+		options.schema,
+	);
+	if (noIssuesTextFallback !== null) {
+		return noIssuesTextFallback;
+	}
+
+	const plainTextFallback = await promptStructuredViaTextFallback<T>(
+		client,
+		baseUrl,
+		sessionId,
+		options,
+	);
+	if (plainTextFallback !== null) {
+		return plainTextFallback;
+	}
+
+	const sessionFallback = await extractStructuredPayloadFromSession<T>(
+		client,
+		baseUrl,
+		sessionId,
+		options.schema,
+	);
+	if (sessionFallback !== null) {
+		return sessionFallback;
+	}
+
+	const promptText = extractPromptText(response);
+	const sessionDetails = await describeSessionStructuredState(
+		client,
+		baseUrl,
+		sessionId,
+	);
+	const details = promptText ? ` Raw response text: ${truncateText(promptText, 400)}` : '';
+	throw new Error(
+		`OpenCode did not return a structured output payload.${details}${sessionDetails ? ` Session state: ${sessionDetails}` : ''}`,
+	);
 }
 
 async function promptStructuredViaTextFallback<T>(
@@ -1324,6 +1340,7 @@ function extractTextFromParts(
 export type { OpencodeClient };
 
 export const __test__ = {
+	extractStructuredPromptPayload,
 	formatRecentServerOutput,
 	formatTransportError,
 	withTransportRetry,
