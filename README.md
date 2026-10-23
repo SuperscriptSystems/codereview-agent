@@ -83,6 +83,8 @@ Key config fields:
 - `review.generatedFiles`
 - `review.testKeywords`
 
+Test files are excluded before review batching. Detection uses path and filename tokens (including CamelCase): `tests/`, `__tests__/`, `Project.Tests/`, `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.go`, `*Test.java`, and `*Tests.cs`. The built-in tokens are `test`, `tests`, `spec`, `specs`, `fixture`, `fixtures`, and `e2e`; pytest's `conftest.py` is also excluded. Both `/` and `\` path separators are supported. `review.testKeywords` adds project-specific tokens to these built-in rules.
+
 Optional integrations use these environment variables:
 
 - Jira: `JIRA_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`

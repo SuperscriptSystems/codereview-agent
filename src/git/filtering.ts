@@ -15,26 +15,57 @@ const lockfileNames = new Set([
 	'packages.lock.json',
 ]);
 
+const testFileKeywords = [
+	'test',
+	'tests',
+	'spec',
+	'specs',
+	'fixture',
+	'fixtures',
+	'e2e',
+];
+
+export function isTestFile(
+	filePath: string,
+	testKeywords: string[] = [],
+): boolean {
+	const keywords = new Set(
+		[...testFileKeywords, ...testKeywords]
+			.map(keyword => keyword.toLowerCase())
+			.filter(Boolean),
+	);
+	const parts = filePath.replaceAll('\\', '/').split('/');
+
+	// pytest's shared test setup does not contain a separate "test" token.
+	if (parts.at(-1)?.toLowerCase() === 'conftest.py') {
+		return true;
+	}
+
+	return parts.some(part => {
+		const lowerPart = part.toLowerCase();
+		const tokens = part
+			.replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
+			.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+			.toLowerCase()
+			.split(/[^a-z0-9]+/);
+
+		return (
+			tokens.some(token => keywords.has(token)) ||
+			[...keywords].some(
+				keyword => lowerPart === keyword || lowerPart.includes(`.${keyword}.`),
+			)
+		);
+	});
+}
+
 export function filterTestFiles(
 	changedFilesMap: ChangedFileMap,
 	testKeywords: string[],
 ): ChangedFileMap {
-	const keywords = testKeywords.map(keyword => keyword.toLowerCase());
 	const filtered: ChangedFileMap = {};
 
 	for (const [filePath, diff] of Object.entries(changedFilesMap)) {
-		const parts = path
-			.normalize(filePath)
-			.split(path.sep)
-			.map(part => part.toLowerCase());
-
-		const matchesKeyword = parts.some(part =>
-			keywords.some(
-				keyword => part === keyword || part.includes(`.${keyword}.`),
-			),
-		);
-
-		if (!matchesKeyword) {
+		if (!isTestFile(filePath, testKeywords)) {
 			filtered[filePath] = diff;
 		}
 	}

@@ -10,10 +10,60 @@ import {
 	isGeneratedFile,
 	isFrontendNoiseFile,
 	isLockfile,
+	isTestFile,
 	shouldIgnorePath,
 } from '../../src/git/filtering.js';
 
 describe('filtering', () => {
+	it.each([
+		'src/LinInvitationRoutingTests.cs',
+		'src/UserServiceTest.cs',
+		'src/TestUserService.java',
+		'src/HTTPClientTests.cs',
+		'src/Project.Tests/Helpers.cs',
+		'src/IntegrationTests/Helpers.cs',
+		'src/__tests__/app.ts',
+		'src/TESTS/app.ts',
+		'src/specs/app.rb',
+		'src/app.test.ts',
+		'src/app.tests.ts',
+		'src/component.spec.tsx',
+		'src/test_user.py',
+		'src/user_test.go',
+		'src/user_spec.rb',
+		'src/fixtures/data.json',
+		'e2e/login.ts',
+		'src/conftest.py',
+		'src\\__tests__\\app.ts',
+		'src\\Project.Tests\\Helpers.cs',
+	])('excludes the test path %s without custom keywords', filePath => {
+		expect(isTestFile(filePath)).toBe(true);
+		expect(filterTestFiles({ [filePath]: 'diff' }, [])).toEqual({});
+	});
+
+	it.each([
+		'src/contest.ts',
+		'src/latest.cs',
+		'src/LatestVersion.cs',
+		'src/ContestService.cs',
+		'src/specification.ts',
+		'src/Inspector.cs',
+		'src/testing.ts',
+		'src/testimonials/User.cs',
+		'src/app.ts',
+	])('keeps the application path %s', filePath => {
+		expect(isTestFile(filePath)).toBe(false);
+		expect(filterTestFiles({ [filePath]: 'diff' }, [])).toEqual({
+			[filePath]: 'diff',
+		});
+	});
+
+	it('supports additional project-specific test keywords', () => {
+		expect(isTestFile('src/checks/app.ts', ['CHECKS'])).toBe(true);
+		expect(isTestFile('src/app.checks.ts', ['checks'])).toBe(true);
+		expect(isTestFile('src/app.ts', [''])).toBe(false);
+	});
+
 	it('filters test files by path segment', () => {
 		const result = filterTestFiles(
 			{
@@ -102,7 +152,9 @@ describe('filtering', () => {
 	});
 
 	it('detects generated files by content marker', async () => {
-		const repoPath = await mkdtemp(path.join(tmpdir(), 'code-review-agent-filtering-'));
+		const repoPath = await mkdtemp(
+			path.join(tmpdir(), 'code-review-agent-filtering-'),
+		);
 
 		try {
 			await writeFile(
