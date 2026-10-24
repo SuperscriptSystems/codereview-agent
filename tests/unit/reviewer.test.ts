@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { OpencodeSessionClient } from '../../src/opencode/client.js';
 
 import {
 	buildReviewBatches,
@@ -39,6 +40,13 @@ describe('reviewer', () => {
 			'Use your tools to inspect any needed files, symbols, and surrounding repository context.',
 		);
 		expect(prompt).toContain('Do not edit files.');
+		expect(prompt).toContain('exhaustive review scope for this batch');
+		expect(prompt).toContain(
+			'restrict it with -- followed by the paths in this batch',
+		);
+		expect(prompt).toContain(
+			'Test files and other filtered files are excluded from review',
+		);
 		expect(prompt).toContain('concrete, high-confidence issues');
 		expect(prompt).toContain(
 			'Do not report compiler, linter, formatting, or speculative issues.',
@@ -99,6 +107,7 @@ describe('reviewer', () => {
 				}) as unknown as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -120,16 +129,18 @@ describe('reviewer', () => {
 
 	it('starts reviewer without discovering agents or overriding the native system prompt', async () => {
 		const listAgents = vi.fn(() => new Promise<string[]>(() => {}));
-		const promptStructured = vi.fn(
+		const promptStructured = vi.fn<OpencodeSessionClient['promptStructured']>(
 			async <T>(_sessionId: string, _options: any) => ({ issues: [] }) as T,
 		);
 		const client = {
 			listAgents,
 			createSession: async () => 'session-1',
 			promptText: async () => '',
-			promptStructured,
+			promptStructured: async <T>(...args: Parameters<OpencodeSessionClient['promptStructured']>) =>
+				await promptStructured(...args) as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -165,6 +176,7 @@ describe('reviewer', () => {
 			promptStructured,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -200,6 +212,7 @@ describe('reviewer', () => {
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -220,6 +233,7 @@ describe('reviewer', () => {
 				promptStructured,
 				getDiagnostics: () => ({ recentServerOutput: '' }),
 				abortSession: async () => {},
+				deleteSession: async () => {},
 				close: async () => {},
 			};
 
@@ -258,6 +272,7 @@ describe('reviewer', () => {
 				promptStructured,
 				getDiagnostics: () => ({ recentServerOutput: '' }),
 				abortSession: async () => {},
+				deleteSession: async () => {},
 				close: async () => {},
 			};
 
@@ -301,6 +316,7 @@ describe('reviewer', () => {
 				}) as unknown as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -412,6 +428,7 @@ describe('reviewer', () => {
 				recentServerOutput,
 			}),
 			abortSession,
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -442,6 +459,7 @@ describe('reviewer', () => {
 			promptStructured,
 			getDiagnostics: () => ({ recentServerOutput: 'initializing session' }),
 			abortSession: vi.fn(),
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 		await expect(
@@ -490,13 +508,14 @@ describe('reviewer', () => {
 			promptText: async () => '',
 			promptStructured: vi.fn((_id: string, options: any) => {
 				promptSignal = options.signal;
-				return new Promise(() => {});
+				return new Promise<never>(() => {});
 			}),
 			getDiagnostics: () => ({
 				recentServerOutput: 'provider is still working',
 			}),
 			abortSession: vi.fn().mockResolvedValue(undefined),
 			close: async () => {},
+			deleteSession: async () => {},
 		};
 		const promise = runReview(client, {
 			...input,
@@ -560,6 +579,7 @@ describe('reviewer', () => {
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -612,6 +632,7 @@ describe('reviewer', () => {
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 
@@ -710,6 +731,7 @@ describe('reviewer', () => {
 			},
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
+			deleteSession: async () => {},
 			close: async () => {},
 		};
 

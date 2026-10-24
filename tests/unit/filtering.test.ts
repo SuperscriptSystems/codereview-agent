@@ -17,6 +17,7 @@ import {
 describe('filtering', () => {
 	it.each([
 		'src/LinInvitationRoutingTests.cs',
+		'src/BillingPlanChangedEventHandlerTests.cs',
 		'src/UserServiceTest.cs',
 		'src/TestUserService.java',
 		'src/HTTPClientTests.cs',
