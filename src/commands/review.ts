@@ -142,6 +142,7 @@ export async function runReviewCommand(
 	logger.info(
 		`Files after filtering: ${Object.keys(filteredChangedFilesMap).length}`,
 	);
+	logger.info(`Review scope: ${Object.keys(filteredChangedFilesMap).join(', ')}`);
 	if (
 		config.review.lockfiles.excludeFromReview &&
 		config.review.lockfiles.logExcluded &&
@@ -177,6 +178,7 @@ export async function runReviewCommand(
 			logger.info(
 				`Batch ${index + 1}: ${Object.keys(batch).length} files, ${diffChars} diff chars`,
 			);
+			logger.info(`Batch ${index + 1} files: ${Object.keys(batch).join(', ')}`);
 		}
 	}
 	logger.info(`Focus: ${focusAreas.join(', ')}`);

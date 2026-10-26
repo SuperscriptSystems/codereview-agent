@@ -134,6 +134,9 @@ vi.mock('../../src/core/logger.js', () => ({
 }));
 
 const { runReviewCommand } = await import('../../src/commands/review.js');
+const actualFiltering = await vi.importActual<typeof import('../../src/git/filtering.js')>(
+	'../../src/git/filtering.js',
+);
 
 describe('review command', () => {
 	const sessionClient = {
@@ -170,6 +173,49 @@ describe('review command', () => {
 		delete process.env.GITHUB_ACTIONS;
 		delete process.env.GITHUB_PR_NUMBER;
 		delete process.env.BITBUCKET_PR_ID;
+	});
+
+	it('skips OpenCode entirely when only test files changed using the real filter', async () => {
+		filterTestFilesMock.mockImplementation(actualFiltering.filterTestFiles);
+		getStagedDiffContentMock.mockResolvedValue({
+			changedFilesMap: {
+				'FT.CRMI.Tests/BillingPlanChangedEventHandlerTests.cs': 'diff',
+				'FT.CRMI.Application/LinInvitationRoutingTests.cs': 'diff',
+				'src/__tests__/app.ts': 'diff',
+				'src/test_billing.py': 'diff',
+			},
+			changedFilesContent: {},
+		});
+
+		await runReviewCommand({
+			repoPath: '/repo', baseRef: 'origin/main', headRef: 'HEAD',
+			staged: true, trace: false,
+		});
+
+		expect(createSessionClientMock).not.toHaveBeenCalled();
+		expect(runReviewMock).not.toHaveBeenCalled();
+		expect(buildJiraContextMock).not.toHaveBeenCalled();
+		expect(loggerFns.info).toHaveBeenCalledWith('No non-test files remain after filtering.');
+	});
+
+	it('sends only application files to review using the real filter', async () => {
+		filterTestFilesMock.mockImplementation(actualFiltering.filterTestFiles);
+		getStagedDiffContentMock.mockResolvedValue({
+			changedFilesMap: {
+				'src/BillingPlanChangedEventHandler.cs': 'application diff',
+				'src/BillingPlanChangedEventHandlerTests.cs': 'test diff',
+			},
+			changedFilesContent: {},
+		});
+
+		await runReviewCommand({
+			repoPath: '/repo', baseRef: 'origin/main', headRef: 'HEAD',
+			staged: true, trace: false,
+		});
+
+		expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({
+			changedFilesMap: { 'src/BillingPlanChangedEventHandler.cs': 'application diff' },
+		}));
 	});
 
 	it('passes staged review inputs through the new runReview shape', async () => {
