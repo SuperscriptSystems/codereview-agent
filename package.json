@@ -17,7 +17,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "1.18.34",
+    "@opencode-ai/sdk": "1.19.4",
     "commander": "^13.1.0",
     "dotenv": "^16.4.7",
     "execa": "^9.5.2",

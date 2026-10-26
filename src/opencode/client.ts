@@ -1,12 +1,14 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk';
 import { logger } from '../core/logger.js';
 import { defaultPromptTimeoutMs, runAsyncPrompt } from './async-prompt.js';
+import type { NativeFileGuardOptions } from './native-file-guard.js';
 import {
 	formatRecentServerOutput,
 	formatTransportError,
@@ -42,30 +44,124 @@ export interface OpencodeSessionClient {
 			prompt: string;
 			schema: Record<string, unknown>;
 			retryCount?: number;
+			tools?: Record<string, boolean>;
 			signal?: AbortSignal;
 		},
 	): Promise<T>;
 	abortSession(sessionId: string, signal?: AbortSignal): Promise<void>;
 	deleteSession(sessionId: string): Promise<void>;
-	getDiagnostics(): { recentServerOutput: string; serverUrl?: string; serverVersion?: string };
+	restart?(): Promise<void>;
+	isHealthy?(): boolean;
+	getDiagnostics(): {
+		recentServerOutput: string;
+		serverUrl?: string;
+		serverVersion?: string;
+	};
 	close(): Promise<void>;
 }
 
 export async function createSessionClient(
 	config: Record<string, unknown>,
 	directory?: string,
+	contextOptions?: NativeFileGuardOptions,
 ): Promise<OpencodeSessionClient> {
+	let active = await createSessionClientInstance(
+		config,
+		directory,
+		contextOptions,
+	);
+	let closed = false;
+
+	return {
+		createSession: (title, signal) => active.createSession(title, signal),
+		listAgents: () => active.listAgents(),
+		promptText: (sessionId, options) => active.promptText(sessionId, options),
+		promptStructured: <T>(
+			sessionId: string,
+			options: Parameters<OpencodeSessionClient['promptStructured']>[1],
+		) => active.promptStructured<T>(sessionId, options),
+		abortSession: (sessionId, signal) => active.abortSession(sessionId, signal),
+		deleteSession: sessionId => active.deleteSession(sessionId),
+		isHealthy: () => active.isHealthy?.() ?? true,
+		getDiagnostics: () => active.getDiagnostics(),
+		async restart(): Promise<void> {
+			if (closed) throw new Error('Cannot restart a closed OpenCode client.');
+			try {
+				await active.close();
+			} catch (error) {
+				logger.warn(
+					`Could not fully close unhealthy OpenCode server before restart: ${formatTransportError(error)}`,
+				);
+			}
+			active = await createSessionClientInstance(
+				config,
+				directory,
+				contextOptions,
+			);
+		},
+		async close(): Promise<void> {
+			if (closed) return;
+			closed = true;
+			await active.close();
+		},
+	};
+}
+
+async function createSessionClientInstance(
+	config: Record<string, unknown>,
+	directory?: string,
+	contextOptions?: NativeFileGuardOptions,
+): Promise<Omit<OpencodeSessionClient, 'restart'>> {
 	const startup = new AbortController();
-	const startupTimer = setTimeout(() => startup.abort(
-		new Error(`OpenCode server startup timed out after ${serverStartupTimeoutMs}ms.`),
-	), serverStartupTimeoutMs);
-	let startedServer: Awaited<ReturnType<typeof startIsolatedOpencodeServer>> | undefined;
+	const startupTimer = setTimeout(
+		() =>
+			startup.abort(
+				new Error(
+					`OpenCode server startup timed out after ${serverStartupTimeoutMs}ms.`,
+				),
+			),
+		serverStartupTimeoutMs,
+	);
+	let startedServer:
+		| Awaited<ReturnType<typeof startIsolatedOpencodeServer>>
+		| undefined;
 	const lifetime = new AbortController();
 	let client: OpencodeClient;
+	let healthy = true;
+	let guardDirectory: string | undefined;
+	let guardMarker: string | undefined;
 	try {
+		let serverConfig = sanitizeOpencodeServerConfig(config);
+		if (contextOptions) {
+			if (!directory)
+				throw new Error('Review context requires a repository directory.');
+			guardDirectory = await mkdtemp(
+				path.join(tmpdir(), 'code-review-native-guard-'),
+			);
+			guardMarker = path.join(guardDirectory, 'ready');
+			const moduleUrl = new URL(
+				import.meta.url.endsWith('.ts')
+					? './native-file-guard.ts'
+					: './native-file-guard.js',
+				import.meta.url,
+			).href;
+			const pluginPath = path.join(guardDirectory, 'guard.mjs');
+			await writeFile(
+				pluginPath,
+				`import { writeFile } from 'node:fs/promises';\nimport { createNativeFileGuard } from ${JSON.stringify(moduleUrl)};\nexport default async () => { const hooks = await createNativeFileGuard(${JSON.stringify(directory)}, ${JSON.stringify(contextOptions)}); await writeFile(${JSON.stringify(guardMarker)}, 'ready'); return hooks; };\n`,
+			);
+			serverConfig = {
+				...serverConfig,
+				mcp: {},
+				plugin: [pathToFileURL(pluginPath).href],
+			};
+		}
 		const port = await getAvailablePort();
 		startedServer = await startIsolatedOpencodeServer(
-			sanitizeOpencodeServerConfig(config), port, startup.signal,
+			serverConfig,
+			port,
+			startup.signal,
+			Boolean(contextOptions),
 		);
 		client = createOpencodeClient({ baseUrl: startedServer.url, directory });
 		await waitForRepositoryReady(
@@ -75,12 +171,22 @@ export async function createSessionClient(
 			startedServer.getRecentOutput,
 			directory,
 		);
+		if (guardMarker) {
+			await access(guardMarker).catch(() => {
+				throw new Error('OpenCode native test-file guard did not load.');
+			});
+			logger.info('OpenCode native read/glob/grep test-file guard loaded.');
+		}
 	} catch (error) {
 		lifetime.abort(error);
 		if (startedServer) {
-			logger.warn(`OpenCode startup recent server output:\n${startedServer.getRecentOutput()}`);
+			logger.warn(
+				`OpenCode startup recent server output:\n${startedServer.getRecentOutput()}`,
+			);
 			await startedServer.close();
 		}
+		if (guardDirectory)
+			await rm(guardDirectory, { recursive: true, force: true });
 		throw error;
 	} finally {
 		clearTimeout(startupTimer);
@@ -191,6 +297,7 @@ export async function createSessionClient(
 				prompt: string;
 				schema: Record<string, unknown>;
 				retryCount?: number;
+				tools?: Record<string, boolean>;
 				signal?: AbortSignal;
 			},
 		): Promise<T> {
@@ -209,6 +316,7 @@ export async function createSessionClient(
 						retryCount: options.retryCount ?? 3,
 						schema: options.schema,
 					},
+					tools: options.tools,
 				},
 				{
 					signal,
@@ -233,40 +341,60 @@ export async function createSessionClient(
 		},
 		async close(): Promise<void> {
 			lifetime.abort(new Error('OpenCode client closed.'));
-			await server.close();
+			try {
+				await server.close();
+			} finally {
+				if (guardDirectory)
+					await rm(guardDirectory, { recursive: true, force: true });
+			}
 		},
 		async abortSession(sessionId: string, signal?: AbortSignal): Promise<void> {
-			await runRequest(
-				requestSignal =>
-					client.session.abort({
-						path: { id: sessionId },
-						signal: requestSignal,
-					}),
-				{
-					signal: requestSignal(signal),
-					timeoutMs: 5000,
-					label: 'OpenCode abortSession',
-					quiet: true,
-				},
-			);
+			try {
+				await runRequest(
+					requestSignal =>
+						client.session.abort({
+							path: { id: sessionId },
+							signal: requestSignal,
+						}),
+					{
+						signal: requestSignal(signal),
+						timeoutMs: 5000,
+						label: 'OpenCode abortSession',
+						quiet: true,
+					},
+				);
+			} catch (error) {
+				healthy = false;
+				throw error;
+			}
 		},
 		async deleteSession(sessionId: string): Promise<void> {
-			await runRequest(
-				signal =>
-					client.session.delete({
-						path: { id: sessionId },
-						signal,
-					}),
-				{
-					signal: lifetime.signal,
-					timeoutMs: 5000,
-					label: 'OpenCode deleteSession',
-					quiet: true,
-				},
-			);
+			try {
+				await runRequest(
+					signal =>
+						client.session.delete({
+							path: { id: sessionId },
+							signal,
+						}),
+					{
+						signal: lifetime.signal,
+						timeoutMs: 5000,
+						label: 'OpenCode deleteSession',
+						quiet: true,
+					},
+				);
+			} catch (error) {
+				healthy = false;
+				throw error;
+			}
 		},
+		isHealthy: () => healthy,
 		getDiagnostics() {
-			return { recentServerOutput: server.getRecentOutput(), serverUrl: server.url, serverVersion: server.version };
+			return {
+				recentServerOutput: server.getRecentOutput(),
+				serverUrl: server.url,
+				serverVersion: server.version,
+			};
 		},
 	};
 }
@@ -349,6 +477,7 @@ async function promptStructuredViaTextFallback<T>(
 		signal?: AbortSignal;
 		cleanupSignal?: AbortSignal;
 		getRecentServerOutput?: () => string;
+		tools?: Record<string, boolean>;
 	},
 ): Promise<T | null> {
 	const startedAt = Date.now();
@@ -367,6 +496,7 @@ async function promptStructuredViaTextFallback<T>(
 					text: buildStructuredJsonRetryPrompt(options.prompt, options.schema),
 				},
 			],
+			tools: options.tools,
 		},
 		{
 			signal: options.signal,
@@ -527,13 +657,19 @@ async function startIsolatedOpencodeServer(
 	config: Record<string, unknown>,
 	port: number,
 	signal: AbortSignal,
-): Promise<{ url: string; version: string; close(): Promise<void>; getRecentOutput(): string }> {
+	loadNativeGuard = false,
+): Promise<{
+	url: string;
+	version: string;
+	close(): Promise<void>;
+	getRecentOutput(): string;
+}> {
 	const cwd = await mkdtemp(path.join(tmpdir(), 'code-review-agent-opencode-'));
 	const proc = spawn(
 		'opencode',
 		[
 			'serve',
-			'--pure',
+			...(loadNativeGuard ? [] : ['--pure']),
 			'--print-logs',
 			'--log-level=DEBUG',
 			`--hostname=127.0.0.1`,
@@ -541,7 +677,16 @@ async function startIsolatedOpencodeServer(
 		],
 		{
 			cwd,
-			env: buildOpencodeServerEnv(process.env, config, cwd),
+			env: {
+				...buildOpencodeServerEnv(process.env, config, cwd),
+				...(loadNativeGuard
+					? {
+							OPENCODE_PURE: '0',
+							OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
+							OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
+						}
+					: {}),
+			},
 		},
 	);
 
@@ -563,7 +708,10 @@ async function startIsolatedOpencodeServer(
 		health = await waitForHttpReady(url, signal, () => output);
 		logger.info(`OpenCode server version: ${health.version}.`);
 	} catch (error) {
-		if (output) logger.warn(`OpenCode startup server output:\n${formatRecentServerOutput(output)}`);
+		if (output)
+			logger.warn(
+				`OpenCode startup server output:\n${formatRecentServerOutput(output)}`,
+			);
 		await shutdownChildProcess(proc);
 		await rm(cwd, { recursive: true, force: true });
 		throw error;
@@ -628,28 +776,55 @@ async function waitForHttpReady(
 	signal: AbortSignal,
 	getRecentServerOutput: () => string,
 ): Promise<{ healthy: true; version: string }> {
-	return await runRequest(async startupSignal => {
-		let attempt = 0;
-		while (true) {
-			startupSignal.throwIfAborted();
-			attempt += 1;
-			try {
-				return await runRequest(async requestSignal => {
-					const response = await fetch(`${baseUrl}/global/health`, { signal: requestSignal });
-					if (!response.ok) throw new Error(`HTTP ${response.status}`);
-					const health = await response.json() as { healthy?: boolean; version?: string };
-					if (!health.healthy || typeof health.version !== 'string') {
-						throw new Error('OpenCode returned an invalid health response.');
-					}
-					return { healthy: true as const, version: health.version };
-				}, { signal: startupSignal, label: 'OpenCode health probe', timeoutMs: 5000, retry: false, quiet: true });
-			} catch (error) {
+	return await runRequest(
+		async startupSignal => {
+			let attempt = 0;
+			while (true) {
 				startupSignal.throwIfAborted();
-				logger.info(`OpenCode API is not ready (probe ${attempt}: ${formatTransportError(error)}); retrying within the startup deadline.`);
-				await waitForDelay(250, startupSignal);
+				attempt += 1;
+				try {
+					return await runRequest(
+						async requestSignal => {
+							const response = await fetch(`${baseUrl}/global/health`, {
+								signal: requestSignal,
+							});
+							if (!response.ok) throw new Error(`HTTP ${response.status}`);
+							const health = (await response.json()) as {
+								healthy?: boolean;
+								version?: string;
+							};
+							if (!health.healthy || typeof health.version !== 'string') {
+								throw new Error(
+									'OpenCode returned an invalid health response.',
+								);
+							}
+							return { healthy: true as const, version: health.version };
+						},
+						{
+							signal: startupSignal,
+							label: 'OpenCode health probe',
+							timeoutMs: 5000,
+							retry: false,
+							quiet: true,
+						},
+					);
+				} catch (error) {
+					startupSignal.throwIfAborted();
+					logger.info(
+						`OpenCode API is not ready (probe ${attempt}: ${formatTransportError(error)}); retrying within the startup deadline.`,
+					);
+					await waitForDelay(250, startupSignal);
+				}
 			}
-		}
-	}, { signal, label: 'OpenCode API health', timeoutMs: serverStartupTimeoutMs, retry: false, getRecentServerOutput });
+		},
+		{
+			signal,
+			label: 'OpenCode API health',
+			timeoutMs: serverStartupTimeoutMs,
+			retry: false,
+			getRecentServerOutput,
+		},
+	);
 }
 
 function buildOpencodeServerEnv(
@@ -683,7 +858,12 @@ async function waitForServerListening(
 		let settled = false;
 		let pollTimer: NodeJS.Timeout | undefined;
 		const onError = (error: Error) => finish(error);
-		const onExit = (code: number | null) => finish(new Error(`OpenCode server exited with code ${code}${formatServerOutput(getOutput())}`));
+		const onExit = (code: number | null) =>
+			finish(
+				new Error(
+					`OpenCode server exited with code ${code}${formatServerOutput(getOutput())}`,
+				),
+			);
 		const onAbort = () => finish(signal.reason);
 		const finish = (error?: Error): void => {
 			if (settled) {
@@ -709,7 +889,11 @@ async function waitForServerListening(
 				return;
 			}
 
-			if (getOutput().includes(`opencode server listening on http://127.0.0.1:${port}`)) {
+			if (
+				getOutput().includes(
+					`opencode server listening on http://127.0.0.1:${port}`,
+				)
+			) {
 				finish();
 				return;
 			}

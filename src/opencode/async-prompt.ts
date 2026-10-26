@@ -31,7 +31,14 @@ type Message = {
 		time?: { completed?: number };
 		error?: { name?: string; message?: string; data?: { message?: string } };
 	};
-	parts: Array<{ id?: string; messageID?: string; type: string; text?: string; tool?: string; state?: { status?: string } }>;
+	parts: Array<{
+		id?: string;
+		messageID?: string;
+		type: string;
+		text?: string;
+		tool?: string;
+		state?: { status?: string };
+	}>;
 };
 
 /** Submit one turn once; a lost HTTP response must never enqueue the prompt again. */
@@ -56,8 +63,12 @@ export async function runAsyncPrompt(
 		: controller.signal;
 	const messageId = `msg_${(BigInt(Date.now()) * 4096n).toString(16).padStart(12, '0')}${randomBytes(7).toString('hex')}`;
 	const startedAt = Date.now();
-	const observer = observeSessionErrors(client, sessionId, messageId, signal, error =>
-		controller.abort(error),
+	const observer = observeSessionErrors(
+		client,
+		sessionId,
+		messageId,
+		signal,
+		error => controller.abort(error),
 	);
 	try {
 		await runRequest(() => observer.ready, {
@@ -83,22 +94,47 @@ export async function runAsyncPrompt(
 			`${options.label} accepted; session ${sessionId}, message ${messageId}.`,
 		);
 		let lastProgressAt = 0;
-		let useEventsOnly = false;
+		let useEventMessagesOnly = false;
+		let pollStatus = true;
 		while (true) {
 			signal.throwIfAborted();
 			observer.throwIfFailed();
-			const statusResponse = await runRequest(
-				requestSignal => client.session.status({ signal: requestSignal }),
-				{ ...options, signal, label: 'OpenCode session status', quiet: true },
-			);
-			const statuses = assertResponse(
-				statusResponse,
-				'read session status',
-			) as Record<string, { type: string; attempt?: number; message?: string }>;
-			if (!statuses || typeof statuses !== 'object') {
-				throw new Error('OpenCode returned an invalid async session state.');
+			let status:
+				| { type: string; attempt?: number; message?: string }
+				| undefined;
+			if (pollStatus) {
+				try {
+					const statusResponse = await runRequest(
+						requestSignal => client.session.status({ signal: requestSignal }),
+						{
+							...options,
+							signal,
+							label: 'OpenCode session status',
+							quiet: true,
+						},
+					);
+					const statuses = assertResponse(
+						statusResponse,
+						'read session status',
+					) as Record<
+						string,
+						{ type: string; attempt?: number; message?: string }
+					>;
+					if (!statuses || typeof statuses !== 'object') {
+						throw new Error(
+							'OpenCode returned an invalid async session state.',
+						);
+					}
+					status = statuses[sessionId];
+				} catch (error) {
+					if (!isUnavailableStatusEndpoint(error)) throw error;
+					pollStatus = false;
+					useEventMessagesOnly = true;
+					logger.warn(
+						`OpenCode session status is unavailable (${formatTransportError(error)}); continuing the accepted prompt through session events.`,
+					);
+				}
 			}
-			const status = statuses[sessionId];
 			const reportProgress = Date.now() - lastProgressAt >= 30_000;
 			// Tool outputs can be large; fetch message history only for progress or completion.
 			if (status?.type === 'busy' || status?.type === 'retry') {
@@ -108,33 +144,55 @@ export async function runAsyncPrompt(
 				}
 			}
 			let messages = observer.messages();
-			if (messages.length === 0 && !useEventsOnly) {
+			if (messages.length === 0 && !useEventMessagesOnly) {
 				try {
 					const messageResponse = await runRequest(
-						requestSignal => client.session.messages({ path: { id: sessionId }, signal: requestSignal }),
-						{ ...options, signal, label: 'OpenCode session messages', quiet: true },
+						requestSignal =>
+							client.session.messages({
+								path: { id: sessionId },
+								signal: requestSignal,
+							}),
+						{
+							...options,
+							signal,
+							label: 'OpenCode session messages',
+							quiet: true,
+						},
 					);
-					messages = assertResponse(messageResponse, 'read session messages') as Message[];
-					if (!Array.isArray(messages)) throw new Error('OpenCode returned invalid session messages.');
+					messages = assertResponse(
+						messageResponse,
+						'read session messages',
+					) as Message[];
+					if (!Array.isArray(messages))
+						throw new Error('OpenCode returned invalid session messages.');
 				} catch (error) {
-					// OpenCode 1.18.x cannot encode persisted OutputFormatJsonSchema on message GET.
+					// Some OpenCode versions cannot encode persisted OutputFormatJsonSchema on message GET.
 					// Native SSE events retain the same schema and results without that wire codec.
-					if (!(error instanceof Error) || !error.message.includes('Expected OutputFormatJsonSchema')) throw error;
-					useEventsOnly = true;
-					logger.info('OpenCode message-list JSON schema codec is incompatible; reading the current turn from native session events.');
+					if (
+						!(error instanceof Error) ||
+						!error.message.includes('Expected OutputFormatJsonSchema')
+					)
+						throw error;
+					useEventMessagesOnly = true;
+					logger.info(
+						'OpenCode message-list JSON schema codec is incompatible; reading the current turn from native session events.',
+					);
 					messages = observer.messages();
 				}
 			}
 			observer.throwIfFailed();
 			if (body.noReply === true && (!status || status.type === 'idle')) {
-				const user = messages.find(message => message.info.role === 'user' && message.info.id === messageId);
+				const user = messages.find(
+					message =>
+						message.info.role === 'user' && message.info.id === messageId,
+				);
 				if (user && user.parts.length > 0) return { data: user };
 			}
 			// Other turns (including an earlier JSON fallback) cannot satisfy this request.
 			const matching = messages.filter(
 				message =>
 					message.info.role === 'assistant' &&
-				message.info.parentID === messageId,
+					message.info.parentID === messageId,
 			);
 			const latest = matching.at(-1);
 			if ((!status || status.type === 'idle') && latest?.info.time?.completed) {
@@ -202,6 +260,16 @@ export async function runAsyncPrompt(
 	}
 }
 
+function isUnavailableStatusEndpoint(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return (
+		message.includes('OpenCode session status timed out') ||
+		message.includes('fetch failed') ||
+		message.includes('ECONNRESET') ||
+		message.includes('socket hang up')
+	);
+}
+
 function assertResponse(response: unknown, action: string): unknown {
 	const result = response as {
 		data?: unknown;
@@ -209,7 +277,10 @@ function assertResponse(response: unknown, action: string): unknown {
 		response?: { status?: number };
 	};
 	if (result?.error) {
-		const detail = result.error instanceof Error ? result.error.message : JSON.stringify(result.error);
+		const detail =
+			result.error instanceof Error
+				? result.error.message
+				: JSON.stringify(result.error);
 		throw new Error(
 			`OpenCode failed to ${action}: ${detail}${result.response?.status ? ` (HTTP ${result.response.status})` : ''}`,
 		);
@@ -261,15 +332,27 @@ function observeSessionErrors(
 				);
 			}
 			if (event.type === 'message.updated') {
-				const info = event.properties.info as unknown as Message['info'] & { sessionID: string; time: { created: number; completed?: number } };
+				const info = event.properties.info as unknown as Message['info'] & {
+					sessionID: string;
+					time: { created: number; completed?: number };
+				};
 				if (info.sessionID !== sessionId) continue;
-				if (info.role === 'user' && info.id === messageId) user = { info, parts: [] };
+				if (info.role === 'user' && info.id === messageId)
+					user = { info, parts: [] };
 				if (info.role === 'assistant' && info.parentID === messageId) {
-					const previousCreated = (assistant?.info.time as { created?: number } | undefined)?.created ?? 0;
-					if (!assistant || info.id === assistant.info.id || info.time.created > previousCreated ||
-						(info.time.created === previousCreated && info.id > assistant.info.id)) {
+					const previousCreated =
+						(assistant?.info.time as { created?: number } | undefined)
+							?.created ?? 0;
+					if (
+						!assistant ||
+						info.id === assistant.info.id ||
+						info.time.created > previousCreated ||
+						(info.time.created === previousCreated &&
+							info.id > assistant.info.id)
+					) {
 						if (assistant && assistant.info.id !== info.id) {
-							for (const [id, part] of parts) if (part.messageID === assistant.info.id) parts.delete(id);
+							for (const [id, part] of parts)
+								if (part.messageID === assistant.info.id) parts.delete(id);
 						}
 						assistant = { info, parts: [] };
 					}
@@ -277,15 +360,46 @@ function observeSessionErrors(
 			}
 			if (event.type === 'message.part.updated') {
 				const part = event.properties.part;
-				if (part.sessionID !== sessionId || (part.messageID !== messageId && part.messageID !== assistant?.info.id)) continue;
-				if (part.type === 'text') parts.set(part.id, { id: part.id, messageID: part.messageID, type: 'text', text: part.text });
-				if (part.type === 'tool') parts.set(part.id, { id: part.id, messageID: part.messageID, type: 'tool', tool: part.tool, state: { status: part.state.status } });
+				if (
+					part.sessionID !== sessionId ||
+					(part.messageID !== messageId &&
+						part.messageID !== assistant?.info.id)
+				)
+					continue;
+				if (part.type === 'text')
+					parts.set(part.id, {
+						id: part.id,
+						messageID: part.messageID,
+						type: 'text',
+						text: part.text,
+					});
+				if (part.type === 'tool')
+					parts.set(part.id, {
+						id: part.id,
+						messageID: part.messageID,
+						type: 'tool',
+						tool: part.tool,
+						state: { status: part.state.status },
+					});
 			}
 			// Some server versions stream text increments between full part updates.
-			const deltaEvent = event as unknown as { type: string; properties: { sessionID?: string; partID?: string; field?: string; delta?: string } };
-			if (deltaEvent.type === 'message.part.delta' && deltaEvent.properties.sessionID === sessionId && deltaEvent.properties.field === 'text') {
+			const deltaEvent = event as unknown as {
+				type: string;
+				properties: {
+					sessionID?: string;
+					partID?: string;
+					field?: string;
+					delta?: string;
+				};
+			};
+			if (
+				deltaEvent.type === 'message.part.delta' &&
+				deltaEvent.properties.sessionID === sessionId &&
+				deltaEvent.properties.field === 'text'
+			) {
 				const part = parts.get(deltaEvent.properties.partID ?? '');
-				if (part?.type === 'text') part.text = (part.text ?? '') + (deltaEvent.properties.delta ?? '');
+				if (part?.type === 'text')
+					part.text = (part.text ?? '') + (deltaEvent.properties.delta ?? '');
 			}
 		}
 		if (!signal.aborted)
@@ -295,8 +409,15 @@ function observeSessionErrors(
 	})().catch(fail);
 	return {
 		ready,
-		messages: () => [user, assistant].filter((message): message is Message => Boolean(message))
-			.map(message => ({ info: message.info, parts: [...parts.values()].filter(part => part.messageID === message.info.id) })),
+		messages: () =>
+			[user, assistant]
+				.filter((message): message is Message => Boolean(message))
+				.map(message => ({
+					info: message.info,
+					parts: [...parts.values()].filter(
+						part => part.messageID === message.info.id,
+					),
+				})),
 		throwIfFailed: () => {
 			if (failure) throw failure;
 		},

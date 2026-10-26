@@ -1,6 +1,8 @@
 import type { CodeIssue } from '../core/models.js';
 import { logger } from '../core/logger.js';
 
+const bitbucketRequestTimeoutMs = 30_000;
+
 export async function cleanupAndPostAllComments(
 	allIssues: CodeIssue[],
 	filesWithIssues: Record<string, CodeIssue[]>,
@@ -85,8 +87,12 @@ function createBitbucketApi() {
 			path.startsWith('http://') || path.startsWith('https://')
 				? path
 				: `https://api.bitbucket.org/2.0${path}`;
+		const timeoutSignal = AbortSignal.timeout(bitbucketRequestTimeoutMs);
 		const response = await fetch(url, {
 			...init,
+			signal: init?.signal
+				? AbortSignal.any([init.signal, timeoutSignal])
+				: timeoutSignal,
 			headers: {
 				Authorization: authHeader,
 				...(init?.body === undefined

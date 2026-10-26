@@ -9,7 +9,9 @@ import {
 	reviewIssuesEnvelopeSchema,
 } from '../core/models.js';
 import { logger } from '../core/logger.js';
+import { filterTestFiles, isTestFile } from '../git/filtering.js';
 import type { OpencodeSessionClient } from '../opencode/client.js';
+import { nativeReviewTools } from '../opencode/native-file-guard.js';
 
 export const preferredReviewAgent = 'reviewer';
 export const fallbackReviewAgent = 'general';
@@ -74,6 +76,14 @@ export async function runReview(
 	input: RunReviewInput,
 ): Promise<Record<string, ReviewResult>> {
 	input.signal?.throwIfAborted();
+	input = {
+		...input,
+		changedFilesMap: filterTestFiles(input.changedFilesMap, []),
+	};
+	if (Object.keys(input.changedFilesMap).length === 0) return {};
+	logger.info(
+		'Review context: native OpenCode read/glob/grep with test-file filtering.',
+	);
 	// The bundled config defines reviewer; agent discovery is only needed by check-reviewer.
 	const resolvedAgent: ReviewAgent = { name: preferredReviewAgent };
 	logger.info(
@@ -86,7 +96,10 @@ export async function runReview(
 	const issuesByFile = new Map<string, ReviewResult['issues']>();
 
 	for (const issue of envelope.issues) {
-		if (!input.changedFilesMap[issue.filePath]) {
+		if (
+			isTestFile(issue.filePath) ||
+			!Object.hasOwn(input.changedFilesMap, issue.filePath)
+		) {
 			continue;
 		}
 
@@ -123,22 +136,24 @@ async function collectReviewIssues(
 					`Processing review batch ${index + 1}/${totalBatches} (${Object.keys(changedFilesMap).length} files).`,
 				);
 				try {
-					envelopes.push(
-						reviewIssuesEnvelopeSchema.parse(
-							await collectReviewIssues(
-								client,
-								{
-									...input,
-									batching: {
-										...input.batching,
-										enabled: false,
-									},
-									changedFilesMap,
+					const envelope = reviewIssuesEnvelopeSchema.parse(
+						await collectReviewIssues(
+							client,
+							{
+								...input,
+								batching: {
+									...input.batching,
+									enabled: false,
 								},
-								resolvedAgent,
-							),
+								changedFilesMap,
+							},
+							resolvedAgent,
 						),
 					);
+					envelopes.push(envelope);
+					if (index + 1 < totalBatches && client.isHealthy?.() === false) {
+						await restartUnhealthyClient(client, input.signal);
+					}
 				} catch (error) {
 					input.signal?.throwIfAborted();
 					if (!input.failOpen) {
@@ -151,6 +166,9 @@ async function collectReviewIssues(
 					logger.warn(
 						`Skipping failed review batch ${index + 1}/${totalBatches}: ${message}`,
 					);
+					if (index + 1 < totalBatches && isUnhealthyOpenCodeFailure(error)) {
+						await restartUnhealthyClient(client, input.signal);
+					}
 				}
 			}
 
@@ -241,6 +259,38 @@ async function collectReviewIssues(
 	return {
 		issues: [...leftEnvelope.issues, ...rightEnvelope.issues],
 	};
+}
+
+function isUnhealthyOpenCodeFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return [
+		'OpenCode session status timed out',
+		'OpenCode createSession timed out',
+		'OpenCode session messages timed out',
+		'Review batch timed out after',
+		'fetch failed',
+		'ECONNRESET',
+		'socket hang up',
+	].some(candidate => message.includes(candidate));
+}
+
+async function restartUnhealthyClient(
+	client: OpencodeSessionClient,
+	signal?: AbortSignal,
+): Promise<void> {
+	if (!client.restart) {
+		throw new Error(
+			'OpenCode server became unresponsive and cannot be restarted.',
+		);
+	}
+
+	signal?.throwIfAborted();
+	logger.warn(
+		'OpenCode server is unresponsive; restarting it before the next batch.',
+	);
+	await client.restart();
+	signal?.throwIfAborted();
+	logger.info('OpenCode server restart completed.');
 }
 
 async function withBatchTimeout<T>(
@@ -382,6 +432,7 @@ async function promptReviewIssues(
 			prompt,
 			schema: reviewIssuesEnvelopeJsonSchema,
 			retryCount: structuredOutputRetryCount,
+			tools: nativeReviewTools,
 			signal,
 		});
 	} catch (error) {
@@ -400,6 +451,7 @@ async function promptReviewIssues(
 			prompt,
 			schema: reviewIssuesEnvelopeJsonSchema,
 			retryCount: structuredOutputRetryCount,
+			tools: nativeReviewTools,
 			signal,
 		});
 		resolvedAgent.name = fallbackReviewAgent;
@@ -515,13 +567,13 @@ export function buildReviewPrompt(input: RunReviewInput): string {
 		: null;
 
 	return [
-		'Review mode: tool-driven repository inspection.',
+		'Review mode: native OpenCode repository inspection. Test files are excluded from review and model-visible context.',
 		'Review the provided changes and report only concrete, high-confidence issues in the changed behavior.',
 		`Repository path: ${input.repoPath}`,
 		`Scope mode: ${scopeMode}`,
-		'Use your tools to inspect any needed files, symbols, and surrounding repository context.',
+		'Use the native glob, grep and read tools to inspect related application files, symbols, usages and surrounding code when needed. Test files are blocked from reads and filtered out of tool results.',
+		'Shell and subagents are disabled to prevent bypassing test-file exclusions. Do not attempt to access excluded files.',
 		'The Changed files list below is the exhaustive review scope for this batch. The base/head refs identify revisions, not permission to review the entire PR.',
-		'When running git diff, restrict it with -- followed by the paths in this batch. Do not rediscover the review scope from an unrestricted PR diff.',
 		'Test files and other filtered files are excluded from review, even if they appear in repository context or a full PR diff. Do not review them or report findings against them.',
 		'Do not edit files.',
 		'Do not report compiler, linter, formatting, or speculative issues.',

@@ -53,9 +53,9 @@ npm run assess -- --repo-path . --base-ref HEAD~1 --head-ref HEAD
 
 OpenCode runtime settings always come from the bundled `reviewer-opencode.json`.
 
-The server and SDK are pinned to **1.18.34**. Each server runs with isolated OpenCode home, config, data, and state directories. The bundled configuration is passed through `OPENCODE_CONFIG_CONTENT`; inherited `OPENCODE_CONFIG` and permission overrides, repo-local `opencode.json`, and home-directory `.opencode` profiles do not configure the reviewer. Startup logs identify the bundled file and the actual server version.
+The server and SDK are pinned to **1.19.4**. Each server runs with isolated OpenCode home, config, data, and state directories. The bundled configuration is passed through `OPENCODE_CONFIG_CONTENT`; inherited `OPENCODE_CONFIG` and permission overrides, repo-local `opencode.json`, and home-directory `.opencode` profiles do not configure the reviewer. Startup logs identify the bundled file and the actual server version.
 
-Reviews start directly with the configured `reviewer` agent, using OpenCode's native model-specific system prompt. Review scope, reporting criteria, and the JSON output format are passed as the review task rather than a replacement system prompt. If OpenCode reports that `reviewer` is missing, the run switches to the built-in `general` agent with the same task and read-only permissions, and uses it for subsequent batches. Agent discovery is performed by `check-reviewer` only.
+Reviews start directly with the configured `reviewer` agent, using OpenCode's native model-specific system prompt and native `read`, `glob`, and `grep` context tools. A bundled tool-hook guard blocks direct reads of test files and removes test entries and contents from model-visible directory, glob, and grep results. It uses the same built-in test detection and project-specific `review.testKeywords` and `review.filtering` exclusions, and checks symlink targets and repository boundaries. No separate MCP context server is used. Shell, subagents, and other tools are disabled during review to prevent bypassing the filter. The same restrictions apply to the `general` fallback and plain-text JSON retries; native `StructuredOutput` stays enabled. Review scope, reporting criteria, and output schema are passed as the task rather than a replacement system prompt. Agent discovery is performed by `check-reviewer` only.
 
 Reviewer-specific settings live in repo-local `review-config.json` when present, with bundled fallback defaults.
 
@@ -98,7 +98,7 @@ npm test
 npm run build
 ```
 
-With `opencode-ai@1.18.34` installed, verify the actual server protocol and configuration:
+With `opencode-ai@1.19.4` installed, verify the actual server protocol and configuration:
 
 ```bash
 npm run check:opencode-server

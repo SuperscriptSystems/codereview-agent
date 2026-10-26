@@ -134,9 +134,9 @@ vi.mock('../../src/core/logger.js', () => ({
 }));
 
 const { runReviewCommand } = await import('../../src/commands/review.js');
-const actualFiltering = await vi.importActual<typeof import('../../src/git/filtering.js')>(
-	'../../src/git/filtering.js',
-);
+const actualFiltering = await vi.importActual<
+	typeof import('../../src/git/filtering.js')
+>('../../src/git/filtering.js');
 
 describe('review command', () => {
 	const sessionClient = {
@@ -188,14 +188,19 @@ describe('review command', () => {
 		});
 
 		await runReviewCommand({
-			repoPath: '/repo', baseRef: 'origin/main', headRef: 'HEAD',
-			staged: true, trace: false,
+			repoPath: '/repo',
+			baseRef: 'origin/main',
+			headRef: 'HEAD',
+			staged: true,
+			trace: false,
 		});
 
 		expect(createSessionClientMock).not.toHaveBeenCalled();
 		expect(runReviewMock).not.toHaveBeenCalled();
 		expect(buildJiraContextMock).not.toHaveBeenCalled();
-		expect(loggerFns.info).toHaveBeenCalledWith('No non-test files remain after filtering.');
+		expect(loggerFns.info).toHaveBeenCalledWith(
+			'No non-test files remain after filtering.',
+		);
 	});
 
 	it('sends only application files to review using the real filter', async () => {
@@ -209,13 +214,21 @@ describe('review command', () => {
 		});
 
 		await runReviewCommand({
-			repoPath: '/repo', baseRef: 'origin/main', headRef: 'HEAD',
-			staged: true, trace: false,
+			repoPath: '/repo',
+			baseRef: 'origin/main',
+			headRef: 'HEAD',
+			staged: true,
+			trace: false,
 		});
 
-		expect(runReviewMock).toHaveBeenCalledWith(sessionClient, expect.objectContaining({
-			changedFilesMap: { 'src/BillingPlanChangedEventHandler.cs': 'application diff' },
-		}));
+		expect(runReviewMock).toHaveBeenCalledWith(
+			sessionClient,
+			expect.objectContaining({
+				changedFilesMap: {
+					'src/BillingPlanChangedEventHandler.cs': 'application diff',
+				},
+			}),
+		);
 	});
 
 	it('passes staged review inputs through the new runReview shape', async () => {
@@ -632,6 +645,38 @@ describe('review command', () => {
 		expect(approveBitbucketPullRequestMock).toHaveBeenCalledTimes(1);
 		expect(loggerFns.warn).toHaveBeenCalledWith(
 			'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
+		);
+		expect(sessionClient.close).toHaveBeenCalled();
+	});
+
+	it('keeps fail-open successful when Bitbucket approval fails', async () => {
+		parseConfigMock.mockReturnValue({
+			review: buildReviewConfig({ failOpen: true }),
+		});
+		process.env.BITBUCKET_PR_ID = '7';
+		getDiffMock.mockResolvedValue('full diff text');
+		parseChangedFilesFromDiffMock.mockReturnValue({
+			'src/app.ts': 'range-diff',
+		});
+		getCommitMessagesMock.mockResolvedValue('commit');
+		runReviewMock.mockRejectedValue(new Error('fetch failed'));
+		approveBitbucketPullRequestMock.mockRejectedValue(
+			new TypeError('fetch failed'),
+		);
+
+		await expect(
+			runReviewCommand({
+				repoPath: '/repo',
+				baseRef: 'main',
+				headRef: 'HEAD',
+				staged: false,
+				focus: undefined,
+				trace: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(loggerFns.warn).toHaveBeenCalledWith(
+			'Could not approve the pull request after review failure: fetch failed',
 		);
 		expect(sessionClient.close).toHaveBeenCalled();
 	});

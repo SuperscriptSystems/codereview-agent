@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { __test__ } from '../../src/opencode/client.js';
+import { nativeReviewTools } from '../../src/opencode/native-file-guard.js';
 import { reviewIssuesEnvelopeJsonSchema } from '../../src/core/models.js';
 
 describe('opencode structured prompt responses', () => {
@@ -91,7 +92,7 @@ describe('opencode structured prompt responses', () => {
 				} as any,
 				'http://127.0.0.1:4096',
 				'session-1',
-				options,
+				{ ...options, tools: nativeReviewTools },
 				{
 					data: {
 						parts: [
@@ -103,6 +104,7 @@ describe('opencode structured prompt responses', () => {
 		).resolves.toEqual(payload);
 		expect(promptAsync).toHaveBeenCalledTimes(1);
 		const body = promptAsync.mock.calls[0][0].body;
+		expect(body.tools).toEqual(nativeReviewTools);
 		expect(body.agent).toBe('reviewer');
 		expect(body.system).toBeUndefined();
 		expect(body.parts[0].text).toContain(options.prompt);
@@ -212,16 +214,37 @@ describe('OpenCode repository readiness', () => {
 });
 
 describe('HTTP startup readiness', () => {
-	afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
-	const healthy = { ok: true, json: async () => ({ healthy: true, version: '1.18.34' }) };
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+	const healthy = {
+		ok: true,
+		json: async () => ({ healthy: true, version: '1.19.4' }),
+	};
 	it('retries a timed out first health probe within the startup deadline', async () => {
 		vi.useFakeTimers();
-		const fetch = vi.fn()
-			.mockImplementationOnce((_url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })))
+		const fetch = vi
+			.fn()
+			.mockImplementationOnce(
+				(_url, { signal }) =>
+					new Promise((_, reject) =>
+						signal.addEventListener('abort', () => reject(signal.reason), {
+							once: true,
+						}),
+					),
+			)
 			.mockResolvedValue(healthy);
 		vi.stubGlobal('fetch', fetch);
-		const promise = __test__.waitForHttpReady('http://127.0.0.1:4096', new AbortController().signal, () => '');
-		const assertion = expect(promise).resolves.toEqual({ healthy: true, version: '1.18.34' });
+		const promise = __test__.waitForHttpReady(
+			'http://127.0.0.1:4096',
+			new AbortController().signal,
+			() => '',
+		);
+		const assertion = expect(promise).resolves.toEqual({
+			healthy: true,
+			version: '1.19.4',
+		});
 		await vi.advanceTimersByTimeAsync(5250);
 		await assertion;
 		expect(fetch).toHaveBeenCalledTimes(2);
@@ -229,9 +252,16 @@ describe('HTTP startup readiness', () => {
 
 	it('retries HTTP 503 instead of treating an open server as ready', async () => {
 		vi.useFakeTimers();
-		const fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue(healthy);
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: false, status: 503 })
+			.mockResolvedValue(healthy);
 		vi.stubGlobal('fetch', fetch);
-		const promise = __test__.waitForHttpReady('http://127.0.0.1:4096', new AbortController().signal, () => '');
+		const promise = __test__.waitForHttpReady(
+			'http://127.0.0.1:4096',
+			new AbortController().signal,
+			() => '',
+		);
 		await vi.advanceTimersByTimeAsync(250);
 		await expect(promise).resolves.toMatchObject({ healthy: true });
 		expect(fetch).toHaveBeenCalledTimes(2);
@@ -242,8 +272,14 @@ describe('HTTP startup readiness', () => {
 		const controller = new AbortController();
 		const fetch = vi.fn(() => new Promise(() => {}));
 		vi.stubGlobal('fetch', fetch);
-		const promise = __test__.waitForHttpReady('http://127.0.0.1:4096', controller.signal, () => '');
-		const assertion = expect(promise).rejects.toThrow('Shared startup deadline');
+		const promise = __test__.waitForHttpReady(
+			'http://127.0.0.1:4096',
+			controller.signal,
+			() => '',
+		);
+		const assertion = expect(promise).rejects.toThrow(
+			'Shared startup deadline',
+		);
 		await vi.advanceTimersByTimeAsync(20);
 		controller.abort(new Error('Shared startup deadline'));
 		await assertion;
@@ -580,7 +616,13 @@ describe('opencode client structured output extraction', () => {
 
 	it('starts opencode server with project config disabled and explicit config content', () => {
 		const env = __test__.buildOpencodeServerEnv(
-			{ OPENAI_API_KEY: 'test-key', XDG_CONFIG_HOME: '/unsafe', OPENCODE_CONFIG: '/unsafe/opencode.json', OPENCODE_PERMISSION: 'allow', OPENCODE_TEST_HOME: '/unsafe-home' },
+			{
+				OPENAI_API_KEY: 'test-key',
+				XDG_CONFIG_HOME: '/unsafe',
+				OPENCODE_CONFIG: '/unsafe/opencode.json',
+				OPENCODE_PERMISSION: 'allow',
+				OPENCODE_TEST_HOME: '/unsafe-home',
+			},
 			{ model: 'openai/reviewer-model' },
 			'/isolated',
 		);

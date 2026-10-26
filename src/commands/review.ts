@@ -142,7 +142,9 @@ export async function runReviewCommand(
 	logger.info(
 		`Files after filtering: ${Object.keys(filteredChangedFilesMap).length}`,
 	);
-	logger.info(`Review scope: ${Object.keys(filteredChangedFilesMap).join(', ')}`);
+	logger.info(
+		`Review scope: ${Object.keys(filteredChangedFilesMap).join(', ')}`,
+	);
 	if (
 		config.review.lockfiles.excludeFromReview &&
 		config.review.lockfiles.logExcluded &&
@@ -209,7 +211,10 @@ export async function runReviewCommand(
 
 	try {
 		const client = await timeReviewStage('OpenCode server startup', () =>
-			createSessionClient(rawConfig, repoPath),
+			createSessionClient(rawConfig, repoPath, {
+				testKeywords: config.review.testKeywords,
+				filtering: config.review.filtering,
+			}),
 		);
 		sessionClient = client;
 		const reviewResults = await timeReviewStage('OpenCode review', () =>
@@ -286,10 +291,16 @@ export async function runReviewCommand(
 		}
 
 		if (config.review.failOpen) {
-			await timeReviewStage(
-				'PR approval after review failure',
-				approvePullRequestIfPresent,
-			);
+			try {
+				await timeReviewStage(
+					'PR approval after review failure',
+					approvePullRequestIfPresent,
+				);
+			} catch (approvalError) {
+				logger.warn(
+					`Could not approve the pull request after review failure: ${approvalError instanceof Error ? approvalError.message : String(approvalError)}`,
+				);
+			}
 			logger.warn(
 				'Review is configured to fail open. Skipping review failure and attempting to approve the pull request anyway.',
 			);

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CodeIssue } from '../../src/core/models.js';
-import { cleanupAndPostAllComments } from '../../src/integrations/bitbucket.js';
+import {
+	approvePullRequest,
+	cleanupAndPostAllComments,
+} from '../../src/integrations/bitbucket.js';
 
 function makeResponse(
 	status: number,
@@ -196,6 +199,18 @@ describe('bitbucket integration', () => {
 		expect(authorizations.every(value => value === 'Bearer access-token')).toBe(
 			true,
 		);
+	});
+
+	it('applies a timeout signal to Bitbucket requests', async () => {
+		let requestSignal: AbortSignal | null | undefined;
+		global.fetch = vi.fn(async (_input, init) => {
+			requestSignal = init?.signal;
+			return makeResponse(200, { approved: true });
+		}) as typeof fetch;
+
+		await approvePullRequest();
+
+		expect(requestSignal).toBeInstanceOf(AbortSignal);
 	});
 
 	it('throws a clear error when no Bitbucket auth is configured', async () => {

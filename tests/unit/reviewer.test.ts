@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { OpencodeSessionClient } from '../../src/opencode/client.js';
+import { nativeReviewTools } from '../../src/opencode/native-file-guard.js';
 
 import {
 	buildReviewBatches,
@@ -31,19 +32,14 @@ describe('reviewer', () => {
 		structuredOutputRetryCount: 10,
 	};
 
-	it('builds a tool-driven prompt with diff and review metadata', () => {
+	it('builds a prompt with filtered context tools and review metadata', () => {
 		const prompt = buildReviewPrompt(input);
 
 		expect(prompt).toContain('Scope mode: origin/main..HEAD');
 		expect(prompt).toContain('Repository path: /repo');
-		expect(prompt).toContain(
-			'Use your tools to inspect any needed files, symbols, and surrounding repository context.',
-		);
+		expect(prompt).toContain('Use the native glob, grep and read tools');
 		expect(prompt).toContain('Do not edit files.');
 		expect(prompt).toContain('exhaustive review scope for this batch');
-		expect(prompt).toContain(
-			'restrict it with -- followed by the paths in this batch',
-		);
 		expect(prompt).toContain(
 			'Test files and other filtered files are excluded from review',
 		);
@@ -61,6 +57,58 @@ describe('reviewer', () => {
 		expect(prompt).toContain('--- src/app.ts ---');
 		expect(prompt).not.toContain('Annotated Files:');
 		expect(prompt).not.toContain('<BEGIN_REPOSITORY_INSTRUCTIONS>');
+	});
+
+	it('does not create a session when reviewer receives only tests', async () => {
+		const client = { createSession: vi.fn() };
+		await expect(
+			runReview(client as unknown as OpencodeSessionClient, {
+				...input,
+				changedFilesMap: {
+					'src/BillingPlanChangedEventHandlerTests.cs': 'test-only diff',
+				},
+			}),
+		).resolves.toEqual({});
+		expect(client.createSession).not.toHaveBeenCalled();
+	});
+
+	it('removes test diffs and findings and allows only filtered context tools', async () => {
+		const testPath = 'src/BillingPlanChangedEventHandlerTests.cs';
+		const promptStructured = vi
+			.fn()
+			.mockResolvedValue({
+				issues: [
+					{
+						filePath: testPath,
+						lineNumber: 1,
+						issueType: 'LogicError',
+						comment: 'Excluded',
+					},
+				],
+			});
+		const client = {
+			createSession: async () => 'session-1',
+			promptStructured,
+			deleteSession: async () => {},
+			getDiagnostics: () => ({ recentServerOutput: '' }),
+		};
+		const results = await runReview(
+			client as unknown as OpencodeSessionClient,
+			{
+				...input,
+				changedFilesMap: {
+					...input.changedFilesMap,
+					[testPath]: 'SECRET_TEST_CONTENT',
+				},
+			},
+		);
+		const options = promptStructured.mock.calls[0][1];
+		expect(options.tools).toEqual(nativeReviewTools);
+		expect(options.tools['*']).toBe(false);
+		expect(options.tools.read).toBe(true);
+		expect(options.prompt).not.toContain(testPath);
+		expect(options.prompt).not.toContain('SECRET_TEST_CONTENT');
+		expect(results).toEqual({ 'src/app.ts': { issues: [] } });
 	});
 
 	it('adds repository instructions as constrained review criteria', () => {
@@ -136,8 +184,9 @@ describe('reviewer', () => {
 			listAgents,
 			createSession: async () => 'session-1',
 			promptText: async () => '',
-			promptStructured: async <T>(...args: Parameters<OpencodeSessionClient['promptStructured']>) =>
-				await promptStructured(...args) as T,
+			promptStructured: async <T>(
+				...args: Parameters<OpencodeSessionClient['promptStructured']>
+			) => (await promptStructured(...args)) as T,
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
 			deleteSession: async () => {},
@@ -188,6 +237,7 @@ describe('reviewer', () => {
 		const firstOptions = promptStructured.mock.calls[0][1];
 		const fallbackOptions = promptStructured.mock.calls[1][1];
 		expect(firstOptions.agent).toBe('reviewer');
+		expect(firstOptions.tools).toEqual(nativeReviewTools);
 		expect(fallbackOptions).toEqual({ ...firstOptions, agent: 'general' });
 		expect(fallbackOptions.prompt).toContain(
 			reviewInput.repositoryInstructions,
@@ -580,6 +630,7 @@ describe('reviewer', () => {
 			getDiagnostics: () => ({ recentServerOutput: '' }),
 			abortSession: async () => {},
 			deleteSession: async () => {},
+			restart: async () => {},
 			close: async () => {},
 		};
 
@@ -606,6 +657,78 @@ describe('reviewer', () => {
 				],
 			},
 		});
+	});
+
+	it('restarts an unresponsive OpenCode server before the next fail-open batch', async () => {
+		const restart = vi.fn().mockResolvedValue(undefined);
+		const promptStructured = vi
+			.fn()
+			.mockRejectedValueOnce(
+				new Error('OpenCode session status timed out after 15000ms.'),
+			)
+			.mockResolvedValueOnce({ issues: [] });
+		const client = {
+			createSession: vi
+				.fn()
+				.mockResolvedValueOnce('session-1')
+				.mockResolvedValueOnce('session-2'),
+			promptStructured,
+			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: vi.fn().mockResolvedValue(undefined),
+			deleteSession: vi.fn().mockResolvedValue(undefined),
+			restart,
+			close: async () => {},
+		};
+
+		await expect(
+			runReview(client as unknown as OpencodeSessionClient, {
+				...input,
+				failOpen: true,
+				changedFilesMap: { 'src/a.ts': 'a', 'src/b.ts': 'b' },
+				batching: { ...input.batching, maxFilesPerBatch: 1 },
+			}),
+		).resolves.toEqual({
+			'src/a.ts': { issues: [] },
+			'src/b.ts': { issues: [] },
+		});
+		expect(restart).toHaveBeenCalledTimes(1);
+		expect(promptStructured).toHaveBeenCalledTimes(2);
+	});
+
+	it('restarts before the next batch when session cleanup marks the client unhealthy', async () => {
+		const restart = vi.fn().mockResolvedValue(undefined);
+		let healthy = true;
+		const client = {
+			createSession: vi
+				.fn()
+				.mockResolvedValueOnce('session-1')
+				.mockResolvedValueOnce('session-2'),
+			promptStructured: vi.fn().mockResolvedValue({ issues: [] }),
+			getDiagnostics: () => ({ recentServerOutput: '' }),
+			abortSession: vi.fn().mockResolvedValue(undefined),
+			deleteSession: vi.fn().mockImplementation(async () => {
+				healthy = false;
+				throw new Error('OpenCode deleteSession timed out after 5000ms.');
+			}),
+			isHealthy: () => healthy,
+			restart: vi.fn(async () => {
+				healthy = true;
+				await restart();
+			}),
+			close: async () => {},
+		};
+
+		await expect(
+			runReview(client as unknown as OpencodeSessionClient, {
+				...input,
+				changedFilesMap: { 'src/a.ts': 'a', 'src/b.ts': 'b' },
+				batching: { ...input.batching, maxFilesPerBatch: 1 },
+			}),
+		).resolves.toEqual({
+			'src/a.ts': { issues: [] },
+			'src/b.ts': { issues: [] },
+		});
+		expect(restart).toHaveBeenCalledTimes(1);
 	});
 
 	it('does not return a successful empty review when all fail-open batches fail', async () => {
